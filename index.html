@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Whack a Cat</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chewy&family=Baloo+2:wght@500;700&display=swap">
+<style>
+  /* Layout: one full-screen living room canvas, HUD painted on it, HTML cards float over it for menu / game over. */
+  :root {
+    --wall: #2f6b6e;
+    --floor: #8a5a3b;
+    --cat: #f29a3c;
+    --plant: #3fa34d;
+    --pee: #f4d23c;
+    --card: #fff8ec;
+    --ink: #2a1d14;
+    --pot: #c8643b;
+    --display: "Chewy", "Comic Sans MS", system-ui, sans-serif;
+    --body: "Baloo 2", system-ui, -apple-system, sans-serif;
+    color-scheme: light;
+  }
+  html, body { height: 100%; margin: 0; }
+  [hidden] { display: none !important; }
+  body {
+    background: var(--wall);
+    color: var(--ink);
+    font-family: var(--body);
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #stage { position: relative; width: 100%; height: 100%; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+
+  .overlay {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 16px;
+    background: rgba(20, 40, 42, 0.35);
+  }
+  .card {
+    background: var(--card);
+    border: 4px solid var(--ink);
+    border-radius: 22px;
+    box-shadow: 0 10px 0 var(--ink);
+    padding: 22px 26px 26px;
+    max-width: 420px; width: 100%;
+    text-align: center;
+    display: grid; gap: 12px;
+    transform: rotate(-1.5deg);
+  }
+  .card h1, .card h2 {
+    font-family: var(--display);
+    font-weight: 400;
+    margin: 0;
+    line-height: 1;
+    color: var(--cat);
+    -webkit-text-stroke: 2px var(--ink);
+    paint-order: stroke fill;
+    text-wrap: balance;
+  }
+  .card h1 { font-size: clamp(48px, 13vw, 72px); letter-spacing: 1px; }
+  .card h2 { font-size: clamp(38px, 10vw, 54px); }
+  .rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 16px; text-align: left; }
+  .rules li { display: flex; gap: 10px; align-items: baseline; }
+  .rules b { font-family: var(--display); font-weight: 400; font-size: 20px; min-width: 52px; }
+  .good { color: var(--plant); }
+  .bad { color: #c0392b; }
+  .pee { color: #b58f00; }
+  .big { font-family: var(--display); font-size: 44px; line-height: 1; font-variant-numeric: tabular-nums; }
+  .sub { font-size: 15px; opacity: 0.8; margin: 0; }
+  button.play {
+    font-family: var(--display); font-size: 28px;
+    background: var(--plant); color: #fff;
+    border: 4px solid var(--ink); border-radius: 999px;
+    padding: 8px 28px; cursor: pointer;
+    box-shadow: 0 5px 0 var(--ink);
+    justify-self: center;
+    transition: transform .08s;
+  }
+  button.play:hover { transform: translateY(-2px); }
+  button.play:active { transform: translateY(3px); box-shadow: 0 2px 0 var(--ink); }
+  button:focus-visible { outline: 3px dashed var(--pee); outline-offset: 4px; }
+  #mute {
+    position: absolute;
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    right: max(12px, env(safe-area-inset-right, 0px));
+    font-family: var(--body); font-weight: 700; font-size: 14px;
+    background: var(--card); color: var(--ink);
+    border: 3px solid var(--ink); border-radius: 999px;
+    padding: 4px 12px; cursor: pointer;
+  }
+  @media (prefers-reduced-motion: reduce) { .card { transform: none; } }
+</style>
+
+<div id="stage">
+  <canvas id="game" aria-label="Whack a Cat game area"></canvas>
+  <button id="mute" type="button" aria-pressed="false">Sound: on</button>
+
+  <div class="overlay" id="menu">
+    <div class="card">
+      <h1>Whack a Cat</h1>
+      <p class="sub">Mr. Biscuits must never touch the floor.</p>
+      <ul class="rules">
+        <li><b class="good">Tap</b><span>the cat to bonk it back into the air. Combos score more.</span></li>
+        <li><b class="bad">-5</b><span>for every tap that lands on a houseplant.</span></li>
+        <li><b class="pee">Miss</b><span>and the cat walks over and pees on a plant. Whack it on the way to save it.</span></li>
+      </ul>
+      <p class="sub">Two pees kill a plant. Lose all five and it's over.</p>
+      <button class="play" id="playBtn" type="button">Play</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="over" hidden>
+    <div class="card">
+      <h2>The plants are gone</h2>
+      <p class="sub" id="overLine">Your apartment now smells like a litter box.</p>
+      <div class="big" id="finalScore">0</div>
+      <p class="sub" id="bestLine">Best: 0</p>
+      <button class="play" id="againBtn" type="button">Again!</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('game');
+  const ctx = cv.getContext('2d');
+  const menuEl = document.getElementById('menu');
+  const overEl = document.getElementById('over');
+  const muteBtn = document.getElementById('mute');
+
+  const C = {
+    wall: '#2f6b6e', wallDot: 'rgba(255,255,255,0.06)', base: '#1f4a4c',
+    floor: '#8a5a3b', plank: '#74492e', cat: '#f29a3c', catDark: '#c96f1c',
+    belly: '#ffe7c7', ink: '#2a1d14', pot: '#c8643b', potRim: '#a94f2b',
+    leaf: '#3fa34d', leafDark: '#2e7d3a', droop: '#9a9a3a', dead: '#7a5a32',
+    pee: '#f4d23c', sky: '#bfe6f5', card: '#fff8ec', flower: '#ff7aa8', bad: '#e2453c'
+  };
+
+  let W = 0, H = 0, groundY = 0, R = 30;
+  const NPLANTS = 5;
+  let plants = [];
+  let state = 'menu';   // menu | play | pee | over
+  let peePhase = 'walk';
+  let peeTarget = null, peeT = 0, peeSide = 1;
+  let score = 0, combo = 0, whacks = 0, best = 0, saves = 0;
+  let time = 0;
+  const cat = { x: 0, y: 0, vx: 0, vy: 0, rot: 0, spin: 0, face: 1, squint: 0, step: 0 };
+  const parts = [], texts = [];
+
+  try { best = +localStorage.getItem('whackacat-best') || 0; } catch (e) {}
+
+  // ---------- sound ----------
+  let ac = null, muted = false;
+  function audio() {
+    if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+    if (ac && ac.state === 'suspended') ac.resume();
+    return muted ? null : ac;
+  }
+  function env(g, t0, peak, a, d) {
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(peak, t0 + a);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + a + d);
+  }
+  function meow() {
+    const a = audio(); if (!a) return;
+    const t = a.currentTime, p = 0.8 + Math.random() * 0.5;
+    const o = a.createOscillator(), f = a.createBiquadFilter(), g = a.createGain();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(420 * p, t);
+    o.frequency.exponentialRampToValueAtTime(900 * p, t + 0.09);
+    o.frequency.exponentialRampToValueAtTime(520 * p, t + 0.3);
+    f.type = 'lowpass'; f.frequency.value = 1800; f.Q.value = 6;
+    env(g, t, 0.18, 0.03, 0.3);
+    o.connect(f).connect(g).connect(a.destination);
+    o.start(t); o.stop(t + 0.36);
+  }
+  function bonk() {
+    const a = audio(); if (!a) return;
+    const t = a.currentTime, o = a.createOscillator(), g = a.createGain();
+    o.type = 'square';
+    o.frequency.setValueAtTime(220, t);
+    o.frequency.exponentialRampToValueAtTime(70, t + 0.2);
+    env(g, t, 0.15, 0.01, 0.2);
+    o.connect(g).connect(a.destination); o.start(t); o.stop(t + 0.25);
+  }
+  function noise(dur, freq, vol, type) {
+    const a = audio(); if (!a) return;
+    const t = a.currentTime;
+    const buf = a.createBuffer(1, a.sampleRate * dur, a.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+    s.buffer = buf; f.type = type; f.frequency.value = freq; f.Q.value = 1.2;
+    env(g, t, vol, 0.05, dur - 0.05);
+    s.connect(f).connect(g).connect(a.destination); s.start(t);
+  }
+  const pss = () => noise(1.3, 3200, 0.07, 'bandpass');
+  const whiff = () => noise(0.15, 2500, 0.05, 'highpass');
+  function sadTrombone() {
+    const a = audio(); if (!a) return;
+    [392, 370, 349, 262].forEach((fr, i) => {
+      const t = a.currentTime + i * 0.35, o = a.createOscillator(), g = a.createGain();
+      o.type = 'triangle'; o.frequency.setValueAtTime(fr, t);
+      if (i === 3) o.frequency.linearRampToValueAtTime(fr * 0.94, t + 0.8);
+      env(g, t, 0.15, 0.03, i === 3 ? 0.8 : 0.3);
+      o.connect(g).connect(a.destination); o.start(t); o.stop(t + 1);
+    });
+  }
+  muteBtn.addEventListener('click', () => {
+    muted = !muted;
+    muteBtn.textContent = muted ? 'Sound: off' : 'Sound: on';
+    muteBtn.setAttribute('aria-pressed', String(muted));
+  });
+
+  // ---------- layout ----------
+  function resize() {
+    const b = cv.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = b.width; H = b.height;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    groundY = H - Math.max(56, H * 0.13);
+    R = Math.max(24, Math.min(W * 0.075, H * 0.06));
+    layoutPlants();
+    cat.x = Math.min(Math.max(cat.x, R), W - R);
+  }
+  function layoutPlants() {
+    const slot = W / NPLANTS;
+    const potW = Math.min(slot * 0.5, R * 1.7);
+    const potH = potW * 0.85;
+    plants.forEach((p, i) => {
+      p.x = slot * (i + 0.5); p.w = potW; p.h = potH;
+      p.leafH = potH * 1.25;
+    });
+  }
+  function newPlants() {
+    plants = [];
+    for (let i = 0; i < NPLANTS; i++) plants.push({ hp: 2, shake: 0, puddle: 0, flower: i % 2 === 0 });
+    layoutPlants();
+  }
+  function plantHit(p, px, py) {
+    const top = groundY - p.h - p.leafH;
+    return px > p.x - p.w * 0.8 && px < p.x + p.w * 0.8 && py > top && py < groundY + 6;
+  }
+
+  // ---------- physics helpers ----------
+  const difficulty = () => 1 + Math.min(whacks * 0.012, 0.9);
+  const gravity = () => H * 1.15 * difficulty();
+  const jumpSpeed = () => Math.sqrt(2 * gravity() * (groundY - R) * 0.6);
+
+  function launch(px, auto) {
+    const off = (cat.x - px) / R;
+    cat.vy = -jumpSpeed() * (0.9 + Math.random() * 0.15);
+    cat.vx = cat.vx * 0.4 + off * W * 0.3 + (Math.random() - 0.5) * W * 0.18;
+    const lim = W * 0.7;
+    cat.vx = Math.max(-lim, Math.min(lim, cat.vx));
+    cat.spin = off * 7 + (Math.random() - 0.5) * 6;
+    cat.squint = 0.35;
+    for (let i = 0; i < (auto ? 4 : 10); i++) {
+      parts.push({
+        x: cat.x, y: cat.y, vx: (Math.random() - 0.5) * 260, vy: (Math.random() - 0.8) * 260,
+        life: 0.6 + Math.random() * 0.4, size: 3 + Math.random() * 4,
+        color: Math.random() < 0.5 ? C.cat : C.belly
+      });
+    }
+  }
+  function float(x, y, text, color, size) {
+    texts.push({ x, y, text, color: color || C.card, size: size || 26, life: 1 });
+  }
+
+  // ---------- game flow ----------
+  function resetCat() {
+    cat.x = W * 0.5; cat.y = H * 0.3; cat.vx = (Math.random() - 0.5) * W * 0.2;
+    cat.vy = -H * 0.3; cat.rot = 0; cat.spin = 2;
+  }
+  function start() {
+    audio();
+    score = 0; combo = 0; whacks = 0; saves = 0;
+    parts.length = 0; texts.length = 0;
+    newPlants(); resetCat();
+    state = 'play';
+    menuEl.hidden = true; overEl.hidden = true;
+    meow();
+  }
+  function gameOver() {
+    state = 'over';
+    if (score > best) { best = score; try { localStorage.setItem('whackacat-best', best); } catch (e) {} }
+    document.getElementById('finalScore').textContent = score + (score === 1 ? ' point' : ' points');
+    document.getElementById('bestLine').textContent = 'Best: ' + best + ' · Plants saved mid-stroll: ' + saves;
+    const lines = [
+      'Your apartment now smells like a litter box.',
+      'The ficus did not deserve this.',
+      'The cat looks extremely pleased with itself.',
+      'Maybe try fake plants next time.'
+    ];
+    document.getElementById('overLine').textContent = lines[Math.floor(Math.random() * lines.length)];
+    overEl.hidden = false;
+    sadTrombone();
+  }
+  function beginPee() {
+    const alive = plants.filter(p => p.hp > 0);
+    if (!alive.length) { gameOver(); return; }
+    peeTarget = alive.reduce((a, b) => Math.abs(b.x - cat.x) < Math.abs(a.x - cat.x) ? b : a);
+    peeSide = cat.x < peeTarget.x ? -1 : 1;
+    if (peeTarget.x + peeSide * (peeTarget.w * 0.5 + R) < R || peeTarget.x + peeSide * (peeTarget.w * 0.5 + R) > W - R) peeSide = -peeSide;
+    state = 'pee'; peePhase = 'walk';
+    cat.y = groundY - R * 0.95; cat.vx = 0; cat.vy = 0; cat.rot = 0; cat.spin = 0;
+    combo = 0;
+    float(cat.x, cat.y - R * 1.6, 'Uh oh...', C.pee, 30);
+  }
+
+  // ---------- input ----------
+  cv.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (state !== 'play' && !(state === 'pee' && peePhase === 'walk')) return;
+    const b = cv.getBoundingClientRect();
+    const px = e.clientX - b.left, py = e.clientY - b.top;
+    if (Math.hypot(px - cat.x, py - cat.y) <= R * 1.4) {
+      if (state === 'pee') {
+        state = 'play'; saves++; score += 3;
+        float(px, py - 30, 'Plant saved! +3', '#8ff09a', 30);
+      }
+      combo++; whacks++;
+      const pts = 1 + Math.floor(combo / 5);
+      score += pts;
+      const words = ['WHACK!', 'BONK!', 'MREOW!', 'BOOP!', 'SMACK!', 'FLOOF!'];
+      float(px, py, words[Math.floor(Math.random() * words.length)] + ' +' + pts, C.card, combo >= 5 ? 32 : 26);
+      if (combo > 0 && combo % 10 === 0) float(W / 2, H * 0.35, combo + ' combo!', C.pee, 44);
+      launch(px);
+      meow();
+      return;
+    }
+    for (const p of plants) {
+      if (plantHit(p, px, py)) {
+        score -= 5; combo = 0; p.shake = 0.5;
+        float(px, py - 20, 'Not the plant! -5', C.bad, 26);
+        bonk();
+        return;
+      }
+    }
+    whiff();
+  });
+
+  // ---------- update ----------
+  function update(dt) {
+    time += dt;
+    cat.squint = Math.max(0, cat.squint - dt);
+    plants.forEach(p => p.shake = Math.max(0, p.shake - dt));
+
+    if (state === 'play' || state === 'menu' || state === 'over') {
+      if (state === 'over') { cat.vy += gravity() * dt * 0.5; }
+      else cat.vy += gravity() * dt;
+      cat.x += cat.vx * dt; cat.y += cat.vy * dt;
+      cat.vx *= Math.pow(0.7, dt);
+      cat.rot += cat.spin * dt; cat.spin *= Math.pow(0.4, dt);
+      if (Math.abs(cat.vx) > 5) cat.face = cat.vx > 0 ? 1 : -1;
+      if (cat.x < R) { cat.x = R; cat.vx = Math.abs(cat.vx) * 0.8; }
+      if (cat.x > W - R) { cat.x = W - R; cat.vx = -Math.abs(cat.vx) * 0.8; }
+      if (cat.y < R) { cat.y = R; cat.vy = Math.abs(cat.vy) * 0.3; }
+
+      if (state === 'menu') {
+        // attract mode: an invisible player keeps the cat up
+        if (cat.vy > 0 && cat.y > groundY - R * 3.5) launch(cat.x + (Math.random() - 0.5) * R * 1.6, true);
+      } else if (state === 'over') {
+        if (cat.y > groundY - R) { cat.y = groundY - R; cat.vy = 0; cat.vx = 0; cat.spin = 0; cat.rot *= 0.8; }
+      } else if (cat.y + R >= groundY) {
+        cat.y = groundY - R;
+        float(cat.x, groundY - R * 2.4, 'MISSED!', C.bad, 34);
+        beginPee();
+      }
+      if (state !== 'pee') cat.rot = cat.rot % (Math.PI * 2);
+    } else if (state === 'pee') {
+      cat.rot *= Math.pow(0.001, dt);
+      if (peePhase === 'walk') {
+        const tx = peeTarget.x + peeSide * (peeTarget.w * 0.5 + R * 0.95);
+        const dx = tx - cat.x;
+        const sp = W * 0.12 + R * 1.2;
+        if (Math.abs(dx) < 3) {
+          cat.x = tx; peePhase = 'pee'; peeT = 1.4; cat.face = peeSide; pss();
+        } else {
+          cat.x += Math.sign(dx) * Math.min(Math.abs(dx), sp * dt);
+          cat.face = Math.sign(dx); cat.step += dt * 14;
+        }
+      } else if (peePhase === 'pee') {
+        peeT -= dt;
+        peeTarget.puddle = Math.min(1 + (2 - peeTarget.hp), peeTarget.puddle + dt * 0.7);
+        if (peeT <= 0) {
+          peeTarget.hp--;
+          float(peeTarget.x, groundY - peeTarget.h - peeTarget.leafH - 10,
+            peeTarget.hp > 0 ? 'Wilting!' : 'RIP plant', C.pee, 28);
+          if (plants.every(p => p.hp <= 0)) { gameOver(); return; }
+          state = 'play';
+          cat.vy = -jumpSpeed() * 0.95;
+          cat.vx = (W / 2 - cat.x) * 0.6;
+          cat.spin = 3;
+          meow();
+        }
+      }
+    }
+
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i];
+      p.vy += 600 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt;
+      if (p.life <= 0) parts.splice(i, 1);
+    }
+    for (let i = texts.length - 1; i >= 0; i--) {
+      const t = texts[i];
+      t.y -= 50 * dt; t.life -= dt * 0.9;
+      if (t.life <= 0) texts.splice(i, 1);
+    }
+  }
+
+  // ---------- drawing ----------
+  function drawRoom() {
+    ctx.fillStyle = C.wall; ctx.fillRect(0, 0, W, groundY);
+    ctx.fillStyle = C.wallDot;
+    for (let y = 20; y < groundY; y += 36) for (let x = (y / 36 % 2) * 18 + 10; x < W; x += 36) {
+      ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+    }
+    // window
+    const ww = Math.min(W * 0.26, 200), wh = ww * 1.1, wx = W * 0.72 - ww / 2, wy = H * 0.1;
+    ctx.fillStyle = C.sky; ctx.fillRect(wx, wy, ww, wh);
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.beginPath(); ctx.arc(wx + ww * 0.3, wy + wh * 0.3, ww * 0.1, 0, 7); ctx.arc(wx + ww * 0.42, wy + wh * 0.27, ww * 0.12, 0, 7); ctx.fill();
+    ctx.strokeStyle = C.card; ctx.lineWidth = 8; ctx.strokeRect(wx, wy, ww, wh);
+    ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(wx + ww / 2, wy); ctx.lineTo(wx + ww / 2, wy + wh); ctx.moveTo(wx, wy + wh / 2); ctx.lineTo(wx + ww, wy + wh / 2); ctx.stroke();
+    // baseboard + floor
+    ctx.fillStyle = C.base; ctx.fillRect(0, groundY - 10, W, 10);
+    ctx.fillStyle = C.floor; ctx.fillRect(0, groundY, W, H - groundY);
+    ctx.strokeStyle = C.plank; ctx.lineWidth = 2;
+    for (let y = groundY + 18; y < H; y += 18) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      const o = ((y - groundY) / 18 % 2) * 60;
+      for (let x = o; x < W; x += 120) { ctx.beginPath(); ctx.moveTo(x, y - 18); ctx.lineTo(x, y); ctx.stroke(); }
+    }
+  }
+
+  function drawPlant(p) {
+    const sx = p.shake ? Math.sin(time * 50) * p.shake * 10 : 0;
+    const x = p.x + sx, base = groundY + 4;
+    if (p.puddle > 0) {
+      ctx.fillStyle = 'rgba(244,210,60,0.75)';
+      ctx.beginPath(); ctx.ellipse(p.x, base + 2, p.w * (0.6 + p.puddle * 0.45), 6 + p.puddle * 3, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    // leaves
+    const col = p.hp === 2 ? C.leaf : p.hp === 1 ? C.droop : C.dead;
+    const spread = p.hp === 2 ? 0.32 : p.hp === 1 ? 0.55 : 0.85;
+    const len = p.leafH * (p.hp === 2 ? 1 : p.hp === 1 ? 0.85 : 0.6);
+    const stemY = base - p.h;
+    for (let k = -2; k <= 2; k++) {
+      const a = k * spread + Math.sin(time * 2 + p.x) * 0.04 + (p.hp < 2 ? Math.sign(k) * 0.15 : 0);
+      ctx.save(); ctx.translate(x, stemY); ctx.rotate(a);
+      ctx.fillStyle = k % 2 ? col : (p.hp === 2 ? C.leafDark : col);
+      ctx.beginPath(); ctx.ellipse(0, -len * 0.5, p.w * 0.16, len * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+    if (p.flower && p.hp === 2) {
+      ctx.fillStyle = C.flower;
+      for (let i = 0; i < 5; i++) {
+        const a = i / 5 * Math.PI * 2;
+        ctx.beginPath(); ctx.arc(x + Math.cos(a) * 6, stemY - len + Math.sin(a) * 6, 5, 0, 7); ctx.fill();
+      }
+      ctx.fillStyle = C.pee; ctx.beginPath(); ctx.arc(x, stemY - len, 4, 0, 7); ctx.fill();
+    }
+    // pot
+    ctx.fillStyle = C.pot;
+    ctx.beginPath();
+    ctx.moveTo(x - p.w * 0.5, stemY); ctx.lineTo(x + p.w * 0.5, stemY);
+    ctx.lineTo(x + p.w * 0.38, base); ctx.lineTo(x - p.w * 0.38, base); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = C.potRim;
+    ctx.fillRect(x - p.w * 0.56, stemY - 2, p.w * 1.12, p.h * 0.22);
+    if (p.hp === 0) {
+      ctx.fillStyle = C.card; ctx.font = `${Math.round(p.w * 0.28)}px ${'Chewy'}, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('RIP', x, stemY + p.h * 0.55);
+    }
+  }
+
+  function drawCat() {
+    const r = R, walking = state === 'pee' && peePhase === 'walk';
+    const peeing = state === 'pee' && peePhase === 'pee';
+    ctx.save();
+    ctx.translate(cat.x, cat.y);
+    ctx.rotate(cat.rot);
+    ctx.scale(cat.face, 1);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+    // tail
+    const wag = Math.sin(time * (peeing ? 3 : 8)) * 0.3;
+    ctx.strokeStyle = C.ink; ctx.lineWidth = r * 0.3;
+    const tail = () => { ctx.beginPath(); ctx.moveTo(-r * 0.7, r * 0.1); ctx.quadraticCurveTo(-r * 1.5, -r * (0.1 + wag), -r * 1.25, -r * (0.85 + wag)); ctx.stroke(); };
+    tail(); ctx.strokeStyle = C.cat; ctx.lineWidth = r * 0.2; tail();
+
+    // legs
+    const legY = r * 0.72;
+    [-0.55, -0.25, 0.25, 0.55].forEach((lx, i) => {
+      let ly = legY, dx = 0;
+      if (walking) { ly += Math.max(0, Math.sin(cat.step + i * Math.PI / 2)) * -r * 0.15; dx = Math.sin(cat.step + i) * r * 0.06; }
+      if (peeing && i === 0) { ly -= r * 0.35; dx -= r * 0.25; }
+      if (state === 'play' || state === 'menu') ly += r * 0.08 * Math.sin(time * 20 + i);
+      ctx.fillStyle = C.ink; ctx.beginPath(); ctx.ellipse(lx * r + dx, ly, r * 0.19, r * 0.24, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = C.belly; ctx.beginPath(); ctx.ellipse(lx * r + dx, ly + r * 0.02, r * 0.13, r * 0.17, 0, 0, 7); ctx.fill();
+    });
+
+    // body
+    ctx.fillStyle = C.ink; ctx.beginPath(); ctx.ellipse(0, r * 0.15, r * 0.98, r * 0.72, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = C.cat; ctx.beginPath(); ctx.ellipse(0, r * 0.15, r * 0.9, r * 0.64, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = C.belly; ctx.beginPath(); ctx.ellipse(r * 0.1, r * 0.4, r * 0.5, r * 0.3, 0, 0, 7); ctx.fill();
+    ctx.strokeStyle = C.catDark; ctx.lineWidth = r * 0.1;
+    [-0.5, -0.15, 0.2].forEach(sx => { ctx.beginPath(); ctx.moveTo(sx * r - r * 0.08, -r * 0.42); ctx.lineTo(sx * r + r * 0.05, -r * 0.1); ctx.stroke(); });
+
+    // head
+    const hx = r * 0.6, hy = -r * 0.4, hr = r * 0.55;
+    ctx.fillStyle = C.ink;
+    [[-0.7, -0.5, -0.25, -1.35, 0.15, -0.9], [0.1, -0.85, 0.5, -1.35, 0.75, -0.55]].forEach(e => {
+      ctx.beginPath(); ctx.moveTo(hx + e[0] * hr, hy + e[1] * hr); ctx.lineTo(hx + e[2] * hr, hy + e[3] * hr); ctx.lineTo(hx + e[4] * hr, hy + e[5] * hr); ctx.closePath();
+      ctx.lineWidth = r * 0.12; ctx.strokeStyle = C.ink; ctx.stroke(); ctx.fillStyle = C.cat; ctx.fill();
+    });
+    ctx.beginPath(); ctx.arc(hx, hy, hr + r * 0.06, 0, 7); ctx.fillStyle = C.ink; ctx.fill();
+    ctx.beginPath(); ctx.arc(hx, hy, hr, 0, 7); ctx.fillStyle = C.cat; ctx.fill();
+    ctx.strokeStyle = C.catDark; ctx.lineWidth = r * 0.07;
+    [-0.25, 0, 0.25].forEach(s => { ctx.beginPath(); ctx.moveTo(hx + s * hr, hy - hr * 0.95); ctx.lineTo(hx + s * hr * 0.8, hy - hr * 0.6); ctx.stroke(); });
+
+    // face
+    const ey = hy - hr * 0.1, e1 = hx - hr * 0.35, e2 = hx + hr * 0.35;
+    ctx.strokeStyle = C.ink; ctx.fillStyle = C.ink; ctx.lineWidth = r * 0.08;
+    if (cat.squint > 0) {
+      [[e1, 1], [e2, -1]].forEach(([ex, d]) => {
+        ctx.beginPath(); ctx.moveTo(ex - d * hr * 0.15, ey - hr * 0.13); ctx.lineTo(ex + d * hr * 0.12, ey); ctx.lineTo(ex - d * hr * 0.15, ey + hr * 0.13); ctx.stroke();
+      });
+    } else if (peeing) {
+      [e1, e2].forEach(ex => { ctx.beginPath(); ctx.arc(ex, ey + hr * 0.05, hr * 0.14, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke(); });
+    } else {
+      [e1, e2].forEach(ex => {
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ex, ey, hr * 0.2, 0, 7); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = C.ink; ctx.beginPath(); ctx.ellipse(ex + hr * 0.04, ey + hr * 0.03, hr * 0.07, hr * 0.14, 0, 0, 7); ctx.fill();
+      });
+    }
+    ctx.fillStyle = '#ff8fa3';
+    ctx.beginPath(); ctx.moveTo(hx - hr * 0.1, ey + hr * 0.28); ctx.lineTo(hx + hr * 0.1, ey + hr * 0.28); ctx.lineTo(hx, ey + hr * 0.4); ctx.closePath(); ctx.fill();
+    ctx.lineWidth = r * 0.05;
+    ctx.beginPath();
+    ctx.arc(hx - hr * 0.12, ey + hr * 0.45, hr * 0.12, 0, Math.PI);
+    ctx.arc(hx + hr * 0.12, ey + hr * 0.45, hr * 0.12, 0, Math.PI);
+    ctx.stroke();
+    ctx.lineWidth = r * 0.03;
+    [[-1, -0.05], [-1, 0.1], [1, -0.05], [1, 0.1]].forEach(([d, o]) => {
+      ctx.beginPath(); ctx.moveTo(hx + d * hr * 0.3, ey + hr * (0.4 + o)); ctx.lineTo(hx + d * hr * 1.15, ey + hr * (0.32 + o * 2)); ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  function drawPee() {
+    if (!(state === 'pee' && peePhase === 'pee')) return;
+    const sx = cat.x - cat.face * R * 0.75, sy = cat.y + R * 0.35;
+    const p = peeTarget;
+    const ex = p.x + peeSide * p.w * 0.3, ey = groundY - p.h * 0.35;
+    const mx = (sx + ex) / 2, my = Math.min(sy, ey) - R * 0.5;
+    ctx.strokeStyle = C.pee; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    ctx.setLineDash([10, 6]); ctx.lineDashOffset = -time * 80;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(mx, my + Math.sin(time * 30) * 3, ex, ey); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = C.pee;
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath(); ctx.arc(ex + Math.sin(time * 20 + i * 2) * 8, ey + 6 + ((time * 120 + i * 15) % 30), 2.5, 0, 7); ctx.fill();
+    }
+  }
+
+  function drawHUD() {
+    ctx.textBaseline = 'top';
+    const pad = 16;
+    ctx.lineJoin = 'round';
+    const outline = (txt, x, y, size, fill, align) => {
+      ctx.font = `${size}px Chewy, "Comic Sans MS", sans-serif`;
+      ctx.textAlign = align || 'left';
+      ctx.lineWidth = size * 0.18; ctx.strokeStyle = C.ink; ctx.strokeText(txt, x, y);
+      ctx.fillStyle = fill; ctx.fillText(txt, x, y);
+    };
+    if (state === 'menu') return;
+    outline(String(score), pad, pad, 46, score < 0 ? C.bad : C.card);
+    outline('best ' + best, pad, pad + 50, 20, C.pee);
+    if (combo >= 2) outline('combo x' + combo, pad, pad + 74, 22, '#8ff09a');
+    const alive = plants.filter(p => p.hp > 0).length;
+    outline('plants ' + alive + '/' + NPLANTS, W / 2, pad, 24, C.card, 'center');
+  }
+
+  function draw() {
+    drawRoom();
+    plants.forEach(drawPlant);
+    drawPee();
+    // floor shadow under the cat so you can judge height
+    const sh = Math.max(0.2, 1 - (groundY - cat.y) / H);
+    ctx.fillStyle = `rgba(0,0,0,${0.25 * sh})`;
+    ctx.beginPath(); ctx.ellipse(cat.x, groundY + 6, R * 0.9 * sh, 6 * sh, 0, 0, 7); ctx.fill();
+    drawCat();
+    parts.forEach(p => { ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, 7); ctx.fill(); });
+    ctx.globalAlpha = 1;
+    texts.forEach(t => {
+      ctx.globalAlpha = Math.max(0, Math.min(1, t.life * 1.5));
+      ctx.font = `${t.size}px Chewy, "Comic Sans MS", sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = t.size * 0.2; ctx.strokeStyle = C.ink; ctx.strokeText(t.text, t.x, t.y);
+      ctx.fillStyle = t.color; ctx.fillText(t.text, t.x, t.y);
+    });
+    ctx.globalAlpha = 1;
+    drawHUD();
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  window.addEventListener('resize', resize);
+  document.getElementById('playBtn').addEventListener('click', start);
+  document.getElementById('againBtn').addEventListener('click', start);
+  newPlants();
+  resize();
+  resetCat();
+  requestAnimationFrame(frame);
+})();
+</script>
