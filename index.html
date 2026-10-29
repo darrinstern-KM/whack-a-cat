@@ -41,6 +41,7 @@
     padding-right: max(16px, env(safe-area-inset-right, 0px));
     padding-block: 16px;
     background: rgba(20, 40, 42, 0.35);
+    overflow-y: auto;
   }
   .card {
     background: var(--card);
@@ -68,9 +69,15 @@
   .rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 16px; text-align: left; }
   .rules li { display: flex; gap: 10px; align-items: baseline; }
   .rules b { font-family: var(--display); font-weight: 400; font-size: 20px; min-width: 52px; }
-  .good { color: var(--plant); }
+  .good { color: #2e7d3a; }
   .bad { color: #c0392b; }
-  .pee { color: #b58f00; }
+  .pee { color: #8a6d00; }
+  .keys { color: var(--wall); }
+  kbd {
+    font-family: var(--body); font-weight: 700; font-size: 13px;
+    border: 2px solid var(--ink); border-bottom-width: 3px; border-radius: 6px;
+    padding: 0 5px; background: #fff;
+  }
   .big { font-family: var(--display); font-size: 44px; line-height: 1; font-variant-numeric: tabular-nums; }
   .sub { font-size: 15px; opacity: 0.8; margin: 0; }
   button.play {
@@ -109,9 +116,11 @@
         <li><b class="good">Tap</b><span>the cat to bonk it back into the air. Combos score more.</span></li>
         <li><b class="bad">-5</b><span>for every tap that lands on a houseplant.</span></li>
         <li><b class="pee">Miss</b><span>and the cat walks over and pees on a plant. Whack it on the way to save it.</span></li>
+        <li><b class="keys">Keys</b><span><kbd>Space</kbd> swats the cat once it drops into the low swat zone. Hold <kbd>←</kbd> <kbd>→</kbd> to aim. <kbd>P</kbd> pauses, <kbd>M</kbd> mutes.</span></li>
       </ul>
       <p class="sub">Two pees kill a plant. Lose all five and it's over.</p>
       <button class="play" id="playBtn" type="button">Play</button>
+      <p class="sub">or press <kbd>Space</kbd></p>
     </div>
   </div>
 
@@ -149,7 +158,10 @@
   let peePhase = 'walk';
   let peeTarget = null, peeT = 0, peeSide = 1;
   let score = 0, combo = 0, whacks = 0, best = 0, saves = 0;
-  let time = 0;
+  let time = 0, overAt = 0;
+  // keyboard play: Space swats when the cat is inside the low "swat zone", arrows aim
+  const keys = { left: false, right: false };
+  let swatCool = 0, usingKeys = false, paused = false;
   const cat = { x: 0, y: 0, vx: 0, vy: 0, rot: 0, spin: 0, face: 1, squint: 0, step: 0 };
   const parts = [], texts = [];
 
@@ -212,11 +224,12 @@
       o.connect(g).connect(a.destination); o.start(t); o.stop(t + 1);
     });
   }
-  muteBtn.addEventListener('click', () => {
+  function toggleMute() {
     muted = !muted;
     muteBtn.textContent = muted ? 'Sound: off' : 'Sound: on';
     muteBtn.setAttribute('aria-pressed', String(muted));
-  });
+  }
+  muteBtn.addEventListener('click', () => { toggleMute(); muteBtn.blur(); });
 
   // ---------- layout ----------
   function resize() {
@@ -280,6 +293,9 @@
     cat.vy = -H * 0.3; cat.rot = 0; cat.spin = 2;
   }
   function start() {
+    if (state === 'play' || state === 'pee') return;
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    paused = false;
     audio();
     score = 0; combo = 0; whacks = 0; saves = 0;
     parts.length = 0; texts.length = 0;
@@ -289,7 +305,7 @@
     meow();
   }
   function gameOver() {
-    state = 'over';
+    state = 'over'; overAt = time;
     if (score > best) { best = score; try { localStorage.setItem('whackacat-best', best); } catch (e) {} }
     document.getElementById('finalScore').textContent = score + (score === 1 ? ' point' : ' points');
     document.getElementById('bestLine').textContent = 'Best: ' + best + ' · Plants saved mid-stroll: ' + saves;
@@ -316,24 +332,68 @@
   }
 
   // ---------- input ----------
+  const canWhack = () => state === 'play' || (state === 'pee' && peePhase === 'walk');
+  function whackCat(px, py) {
+    if (state === 'pee') {
+      state = 'play'; saves++; score += 3;
+      float(px, py - 30, 'Plant saved! +3', '#8ff09a', 30);
+    }
+    combo++; whacks++;
+    const pts = 1 + Math.floor(combo / 5);
+    score += pts;
+    const words = ['WHACK!', 'BONK!', 'MREOW!', 'BOOP!', 'SMACK!', 'FLOOF!'];
+    float(px, py, words[Math.floor(Math.random() * words.length)] + ' +' + pts, C.card, combo >= 5 ? 32 : 26);
+    if (combo > 0 && combo % 10 === 0) float(W / 2, H * 0.35, combo + ' combo!', C.pee, 44);
+    launch(px);
+    meow();
+  }
+
+  const zoneTop = () => groundY - H * 0.42;
+  function keySwat() {
+    if (swatCool > 0) return;
+    swatCool = 0.25;
+    if (!(state === 'pee' || cat.y > zoneTop())) {
+      whiff();
+      float(cat.x, zoneTop() - 18, 'Too high!', C.card, 20);
+      return;
+    }
+    const aim = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    whackCat(cat.x - aim * R * 0.8, cat.y);
+  }
+
+  const isKey = (e, ...names) => names.includes(e.key.length === 1 ? e.key.toLowerCase() : e.key);
+  window.addEventListener('keydown', e => {
+    if (isKey(e, 'm')) { toggleMute(); return; }
+    if (state === 'menu' || state === 'over') {
+      if (isKey(e, ' ', 'Enter')) {
+        e.preventDefault();
+        if (!e.repeat && (state === 'menu' || time - overAt > 0.8)) start();
+      }
+      return;
+    }
+    if (isKey(e, 'p', 'Escape')) { paused = !paused; return; }
+    if (isKey(e, 'ArrowLeft', 'a')) { keys.left = true; usingKeys = true; e.preventDefault(); }
+    else if (isKey(e, 'ArrowRight', 'd')) { keys.right = true; usingKeys = true; e.preventDefault(); }
+    else if (isKey(e, ' ', 'ArrowUp', 'w', 'Enter')) {
+      e.preventDefault(); usingKeys = true;
+      if (!paused && !e.repeat && canWhack()) keySwat();
+    }
+  });
+  window.addEventListener('keyup', e => {
+    if (isKey(e, 'ArrowLeft', 'a')) keys.left = false;
+    if (isKey(e, 'ArrowRight', 'd')) keys.right = false;
+  });
+  window.addEventListener('blur', () => { keys.left = keys.right = false; });
+
   cv.addEventListener('pointerdown', e => {
     e.preventDefault();
-    if (state !== 'play' && !(state === 'pee' && peePhase === 'walk')) return;
+    usingKeys = false;
+    if (paused) { paused = false; return; }
+    if (!canWhack()) return;
     const b = cv.getBoundingClientRect();
     const px = e.clientX - b.left, py = e.clientY - b.top;
     if (Math.hypot(px - cat.x, py - cat.y) <= R * 1.4) {
-      if (state === 'pee') {
-        state = 'play'; saves++; score += 3;
-        float(px, py - 30, 'Plant saved! +3', '#8ff09a', 30);
-      }
-      combo++; whacks++;
-      const pts = 1 + Math.floor(combo / 5);
-      score += pts;
-      const words = ['WHACK!', 'BONK!', 'MREOW!', 'BOOP!', 'SMACK!', 'FLOOF!'];
-      float(px, py, words[Math.floor(Math.random() * words.length)] + ' +' + pts, C.card, combo >= 5 ? 32 : 26);
-      if (combo > 0 && combo % 10 === 0) float(W / 2, H * 0.35, combo + ' combo!', C.pee, 44);
-      launch(px);
-      meow();
+      whackCat(px, py);
       return;
     }
     for (const p of plants) {
@@ -350,6 +410,7 @@
   // ---------- update ----------
   function update(dt) {
     time += dt;
+    swatCool = Math.max(0, swatCool - dt);
     cat.squint = Math.max(0, cat.squint - dt);
     plants.forEach(p => p.shake = Math.max(0, p.shake - dt));
 
@@ -591,9 +652,33 @@
     outline('plants ' + alive + '/' + NPLANTS, W / 2, pad, 24, C.card, 'center');
   }
 
+  function drawZone() {
+    if (!usingKeys || !(state === 'play' || state === 'pee')) return;
+    const zt = zoneTop(), inZone = state === 'pee' || cat.y > zt;
+    ctx.fillStyle = inZone ? 'rgba(143,240,154,0.10)' : 'rgba(255,255,255,0.05)';
+    ctx.fillRect(0, zt, W, groundY - zt);
+    ctx.strokeStyle = inZone ? '#8ff09a' : 'rgba(255,248,236,0.5)';
+    ctx.lineWidth = 2; ctx.setLineDash([8, 8]);
+    ctx.beginPath(); ctx.moveTo(0, zt); ctx.lineTo(W, zt); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = '16px Chewy, "Comic Sans MS", sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.fillText(inZone ? 'SWAT NOW (Space)' : 'swat zone', 16, zt - 4);
+    // aim arrow under the cat
+    const aim = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    if (aim) {
+      const ax = cat.x + aim * R * 1.5, ay = cat.y;
+      ctx.fillStyle = C.pee; ctx.strokeStyle = C.ink; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(ax + aim * R * 0.4, ay); ctx.lineTo(ax, ay - R * 0.3); ctx.lineTo(ax, ay + R * 0.3); ctx.closePath();
+      ctx.stroke(); ctx.fill();
+    }
+  }
+
   function draw() {
     drawRoom();
     plants.forEach(drawPlant);
+    drawZone();
     drawPee();
     // floor shadow under the cat so you can judge height
     const sh = Math.max(0.2, 1 - (groundY - cat.y) / H);
@@ -611,13 +696,22 @@
     });
     ctx.globalAlpha = 1;
     drawHUD();
+    if (paused) {
+      ctx.fillStyle = 'rgba(20,40,42,0.5)'; ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = '56px Chewy, "Comic Sans MS", sans-serif';
+      ctx.lineWidth = 10; ctx.strokeStyle = C.ink; ctx.strokeText('Paused', W / 2, H * 0.42);
+      ctx.fillStyle = C.cat; ctx.fillText('Paused', W / 2, H * 0.42);
+      ctx.font = '22px Chewy, "Comic Sans MS", sans-serif';
+      ctx.fillStyle = C.card; ctx.fillText('Press P or tap to keep going', W / 2, H * 0.42 + 50);
+    }
   }
 
   let last = performance.now();
   function frame(now) {
     const dt = Math.min(0.033, (now - last) / 1000);
     last = now;
-    update(dt);
+    if (!paused) update(dt);
     draw();
     requestAnimationFrame(frame);
   }
