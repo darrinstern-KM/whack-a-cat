@@ -75,6 +75,7 @@
   .bad { color: #c0392b; }
   .pee { color: #8a6d00; }
   .keys { color: var(--wall); }
+  .power { color: #b8325e; }
   kbd {
     font-family: var(--body); font-weight: 700; font-size: 13px;
     border: 2px solid var(--ink); border-bottom-width: 3px; border-radius: 6px;
@@ -145,6 +146,7 @@
         <li><b class="good">Tap</b><span>the cat to bonk it back into the air. Combos score more.</span></li>
         <li><b class="bad">-5</b><span>for every tap that lands on a houseplant.</span></li>
         <li><b class="pee">Miss</b><span>and the cat walks over and pees on a plant. Whack it on the way to save it.</span></li>
+        <li><b class="power">Broom</b><span>Sometimes a broom falls. Tap it for 5 seconds of superpowers: a floaty cat, a giant swat, double points and no pee.</span></li>
         <li><b class="keys">Keys</b><span><kbd>Space</kbd> swats the cat once it drops into the low swat zone. Hold <kbd>←</kbd> <kbd>→</kbd> to aim. <kbd>P</kbd> pauses, <kbd>M</kbd> mutes.</span></li>
       </ul>
       <p class="sub">One pee kills a plant. Lose all three and it's over.</p>
@@ -209,6 +211,10 @@
   let swatCool = 0, usingKeys = false, paused = false;
   const cat = { x: 0, y: 0, vx: 0, vy: 0, rot: 0, spin: 0, face: 1, squint: 0, step: 0 };
   const parts = [], texts = [];
+  // broom power-up: falls at random times, tap it for POWER_TIME seconds of superpowers
+  const POWER_TIME = 5;
+  let broom = null, nextBroom = 0, power = 0;
+  const powered = () => power > 0;
 
   try { best = +localStorage.getItem('whackacat-best') || 0; } catch (e) {}
 
@@ -334,6 +340,15 @@
       o.connect(g).connect(a.destination); o.start(t); o.stop(t + 1);
     });
   }
+  function sparkle() {
+    const a = audio(); if (!a) return;
+    [523, 659, 784, 1047, 1319].forEach((fr, i) => {
+      const t = a.currentTime + i * 0.06, o = a.createOscillator(), g = a.createGain();
+      o.type = 'triangle'; o.frequency.setValueAtTime(fr, t);
+      env(g, t, 0.12, 0.01, 0.25);
+      o.connect(g).connect(a.destination); o.start(t); o.stop(t + 0.3);
+    });
+  }
   function toggleMute() {
     muted = !muted;
     muteBtn.textContent = muted ? 'Sound: off' : 'Sound: on';
@@ -374,7 +389,7 @@
 
   // ---------- physics helpers ----------
   const difficulty = () => 1 + Math.min(whacks * 0.012, 0.9);
-  const gravity = () => H * 1.15 * difficulty();
+  const gravity = () => H * 1.15 * difficulty() * (powered() ? 0.5 : 1);
   const jumpSpeed = () => Math.sqrt(2 * gravity() * (groundY - R) * 0.6);
 
   function launch(px, auto) {
@@ -410,12 +425,14 @@
     score = 0; combo = 0; whacks = 0; saves = 0;
     parts.length = 0; texts.length = 0;
     newPlants(); resetCat();
+    broom = null; power = 0; nextBroom = time + 8 + Math.random() * 8;
     state = 'play';
     menuEl.hidden = true; overEl.hidden = true;
     meow();
   }
   function gameOver() {
     state = 'over'; overAt = time;
+    broom = null; power = 0;
     if (score > best) { best = score; try { localStorage.setItem('whackacat-best', best); } catch (e) {} }
     document.getElementById('finalScore').textContent = score + (score === 1 ? ' point' : ' points');
     document.getElementById('bestLine').textContent = 'Best: ' + best + ' · Plants saved mid-stroll: ' + saves;
@@ -452,7 +469,7 @@
       float(px, py - 30, 'Plant saved! +3', '#8ff09a', 30);
     }
     combo++; whacks++;
-    const pts = 1 + Math.floor(combo / 5);
+    const pts = (1 + Math.floor(combo / 5)) * (powered() ? 2 : 1);
     score += pts;
     const words = ['WHACK!', 'BONK!', 'MREOW!', 'BOOP!', 'SMACK!', 'FLOOF!'];
     float(px, py, words[Math.floor(Math.random() * words.length)] + ' +' + pts, C.card, combo >= 5 ? 32 : 26);
@@ -461,11 +478,37 @@
     meow();
   }
 
+  function spawnBroom() {
+    broom = {
+      x: R * 2 + Math.random() * (W - R * 4), y: -R * 2,
+      vy: H * 0.2, rot: (Math.random() - 0.5) * 0.6, spin: (Math.random() < 0.5 ? -1 : 1) * 1.2,
+      sway: Math.random() * 6, fade: 0
+    };
+  }
+  const broomHit = (px, py) => broom && !broom.fade && Math.hypot(px - broom.x, py - broom.y) <= R * 1.7;
+  function grabBroom() {
+    for (let i = 0; i < 18; i++) {
+      parts.push({
+        x: broom.x, y: broom.y, vx: (Math.random() - 0.5) * 420, vy: (Math.random() - 0.7) * 420,
+        life: 0.7 + Math.random() * 0.5, size: 3 + Math.random() * 4,
+        color: Math.random() < 0.5 ? C.pee : '#ff7aa8'
+      });
+    }
+    float(broom.x, broom.y - R, 'BROOM POWER!', '#ffb3cf', 38);
+    broom = null;
+    power = POWER_TIME;
+    nextBroom = time + POWER_TIME + 10 + Math.random() * 12;
+    sparkle();
+  }
+
   const zoneTop = () => groundY - H * 0.42;
   function keySwat() {
     if (swatCool > 0) return;
     swatCool = 0.25;
-    if (!(state === 'pee' || cat.y > zoneTop())) {
+    let grabbed = false;
+    if (broom && !broom.fade && broom.y > zoneTop()) { grabBroom(); grabbed = true; }
+    if (!(state === 'pee' || powered() || cat.y > zoneTop())) {
+      if (grabbed) return;
       whiff();
       float(cat.x, zoneTop() - 18, 'Too high!', C.card, 20);
       return;
@@ -506,12 +549,14 @@
     if (!canWhack()) return;
     const b = cv.getBoundingClientRect();
     const px = e.clientX - b.left, py = e.clientY - b.top;
-    if (Math.hypot(px - cat.x, py - cat.y) <= R * 1.4) {
+    if (broomHit(px, py)) { grabBroom(); return; }
+    if (Math.hypot(px - cat.x, py - cat.y) <= R * (powered() ? 3.2 : 1.4)) {
       whackCat(px, py);
       return;
     }
     for (const p of plants) {
       if (plantHit(p, px, py)) {
+        if (powered()) { p.shake = 0.3; whiff(); return; }
         score -= 5; combo = 0; p.shake = 0.5;
         float(px, py - 20, 'Not the plant! -5', C.bad, 26);
         bonk();
@@ -527,6 +572,31 @@
     swatCool = Math.max(0, swatCool - dt);
     cat.squint = Math.max(0, cat.squint - dt);
     plants.forEach(p => p.shake = Math.max(0, p.shake - dt));
+    if (power > 0) {
+      power = Math.max(0, power - dt);
+      if (power === 0 && (state === 'play' || state === 'pee')) float(W / 2, H * 0.3, 'Power gone!', C.card, 30);
+      if (Math.random() < dt * 30) parts.push({
+        x: cat.x + (Math.random() - 0.5) * R * 2, y: cat.y + (Math.random() - 0.5) * R * 2,
+        vx: (Math.random() - 0.5) * 60, vy: -40 - Math.random() * 60, life: 0.6, size: 2 + Math.random() * 3,
+        color: Math.random() < 0.5 ? C.pee : '#ff7aa8'
+      });
+    }
+    if (state === 'play' || state === 'pee') {
+      if (!broom && !powered() && time >= nextBroom) spawnBroom();
+      if (broom) {
+        if (broom.fade) {
+          broom.fade -= dt;
+          if (broom.fade <= 0) { broom = null; nextBroom = time + 8 + Math.random() * 10; }
+        } else {
+          broom.y += broom.vy * dt;
+          broom.sway += dt * 2.2;
+          broom.x += Math.sin(broom.sway) * R * 1.2 * dt;
+          broom.x = Math.min(Math.max(broom.x, R), W - R);
+          broom.rot += broom.spin * dt;
+          if (broom.y > groundY - R * 0.3) { broom.y = groundY - R * 0.3; broom.rot = Math.PI / 2; broom.fade = 0.8; bonk(); }
+        }
+      }
+    }
 
     if (state === 'play' || state === 'menu' || state === 'over') {
       if (state === 'over') { cat.vy += gravity() * dt * 0.5; }
@@ -544,6 +614,12 @@
         if (cat.vy > 0 && cat.y > groundY - R * 3.5) launch(cat.x + (Math.random() - 0.5) * R * 1.6, true);
       } else if (state === 'over') {
         if (cat.y > groundY - R) { cat.y = groundY - R; cat.vy = 0; cat.vx = 0; cat.spin = 0; cat.rot *= 0.8; }
+      } else if (cat.y + R >= groundY && powered()) {
+        // the broom sweeps the cat back up: no pee while powered
+        cat.y = groundY - R;
+        float(cat.x, groundY - R * 2.2, 'SWEPT!', '#ffb3cf', 30);
+        combo = 0;
+        launch(cat.x + (Math.random() - 0.5) * R, true);
       } else if (cat.y + R >= groundY) {
         cat.y = groundY - R;
         float(cat.x, groundY - R * 2.4, 'MISSED!', C.bad, 34);
@@ -732,6 +808,53 @@
     ctx.restore();
   }
 
+  function drawBroom() {
+    if (!broom) return;
+    const L = R * 2.8;
+    ctx.save();
+    ctx.globalAlpha = broom.fade ? Math.max(0, broom.fade / 0.8) : 1;
+    ctx.translate(broom.x, broom.y);
+    if (!broom.fade) {
+      const pulse = 1 + Math.sin(time * 8) * 0.08;
+      ctx.fillStyle = 'rgba(255,179,207,0.28)';
+      ctx.beginPath(); ctx.arc(0, 0, R * 1.6 * pulse, 0, 7); ctx.fill();
+    }
+    ctx.rotate(broom.rot);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    // handle
+    ctx.strokeStyle = C.ink; ctx.lineWidth = R * 0.26;
+    ctx.beginPath(); ctx.moveTo(0, -L * 0.5); ctx.lineTo(0, L * 0.12); ctx.stroke();
+    ctx.strokeStyle = '#a8703f'; ctx.lineWidth = R * 0.15;
+    ctx.beginPath(); ctx.moveTo(0, -L * 0.5); ctx.lineTo(0, L * 0.12); ctx.stroke();
+    // bristles
+    const bw = R * 0.45, bt = L * 0.1, bb = L * 0.5, fw = R * 0.85;
+    ctx.beginPath();
+    ctx.moveTo(-bw, bt); ctx.lineTo(bw, bt); ctx.lineTo(fw, bb); ctx.lineTo(-fw, bb); ctx.closePath();
+    ctx.fillStyle = '#f2c94c'; ctx.fill();
+    ctx.lineWidth = R * 0.08; ctx.strokeStyle = C.ink; ctx.stroke();
+    ctx.lineWidth = R * 0.04; ctx.strokeStyle = '#c9952a';
+    for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(i * bw * 0.4, bt + R * 0.25); ctx.lineTo(i * fw * 0.42, bb - R * 0.05); ctx.stroke(); }
+    // band
+    ctx.fillStyle = '#b8325e'; ctx.strokeStyle = C.ink; ctx.lineWidth = R * 0.06;
+    ctx.beginPath(); ctx.rect(-bw * 1.05, bt - R * 0.05, bw * 2.1, R * 0.28); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawAura() {
+    if (!powered() || state === 'over') return;
+    const fade = Math.min(1, power / 0.6);
+    const pulse = 1 + Math.sin(time * 10) * 0.06;
+    ctx.save();
+    ctx.globalAlpha = 0.35 * fade;
+    ctx.fillStyle = '#ffb3cf';
+    ctx.beginPath(); ctx.arc(cat.x, cat.y, R * 1.7 * pulse, 0, 7); ctx.fill();
+    ctx.globalAlpha = 0.6 * fade;
+    ctx.strokeStyle = C.pee; ctx.lineWidth = 3; ctx.setLineDash([6, 8]); ctx.lineDashOffset = -time * 60;
+    ctx.beginPath(); ctx.arc(cat.x, cat.y, R * 3.2, 0, 7); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
   function drawPee() {
     if (!(state === 'pee' && peePhase === 'pee')) return;
     const sx = cat.x - cat.face * R * 0.75, sy = cat.y + R * 0.35;
@@ -764,11 +887,18 @@
     if (combo >= 2) outline('combo x' + combo, pad, pad + 74, 22, '#8ff09a');
     const alive = plants.filter(p => p.hp > 0).length;
     outline('plants ' + alive + '/' + NPLANTS, W / 2, pad, 24, C.card, 'center');
+    if (powered()) {
+      const bw = Math.min(220, W * 0.5), bx = W / 2 - bw / 2, by = pad + 34;
+      outline('BROOM POWER x2', W / 2, by, 20, '#ffb3cf', 'center');
+      ctx.fillStyle = C.ink; ctx.fillRect(bx - 3, by + 25, bw + 6, 14);
+      ctx.fillStyle = '#b8325e'; ctx.fillRect(bx, by + 28, bw, 8);
+      ctx.fillStyle = C.pee; ctx.fillRect(bx, by + 28, bw * power / POWER_TIME, 8);
+    }
   }
 
   function drawZone() {
     if (!usingKeys || !(state === 'play' || state === 'pee')) return;
-    const zt = zoneTop(), inZone = state === 'pee' || cat.y > zt;
+    const zt = zoneTop(), inZone = state === 'pee' || powered() || cat.y > zt;
     ctx.fillStyle = inZone ? 'rgba(143,240,154,0.10)' : 'rgba(255,255,255,0.05)';
     ctx.fillRect(0, zt, W, groundY - zt);
     ctx.strokeStyle = inZone ? '#8ff09a' : 'rgba(255,248,236,0.5)';
@@ -794,6 +924,8 @@
     plants.forEach(drawPlant);
     drawZone();
     drawPee();
+    drawBroom();
+    drawAura();
     // floor shadow under the cat so you can judge height
     const sh = Math.max(0.2, 1 - (groundY - cat.y) / H);
     ctx.fillStyle = `rgba(0,0,0,${0.25 * sh})`;
