@@ -9,7 +9,8 @@ Keep Mr. Biscuits in the air. Don't let him near the plants.
 - **Tap the cat** to bonk it back into the air. Combos score more.
 - **Tap a plant** and you lose 5 points.
 - **Miss** and the cat walks over and pees on a plant. Whack it on the way to save the plant (+3).
-- Two pees kill a plant. Lose all five and it's game over.
+- One pee kills a plant. Lose all three and it's game over.
+- Save your score to the shared leaderboard with any name you like.
 
 ### Keyboard
 

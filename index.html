@@ -37,6 +37,7 @@
   .overlay {
     position: absolute; inset: 0;
     display: grid; place-items: center;
+    grid-template-columns: minmax(0, 1fr);
     padding-left: max(16px, env(safe-area-inset-left, 0px));
     padding-right: max(16px, env(safe-area-inset-right, 0px));
     padding-block: 16px;
@@ -52,6 +53,7 @@
     max-width: 420px; width: 100%;
     text-align: center;
     display: grid; gap: 12px;
+    grid-template-columns: minmax(0, 1fr);
     transform: rotate(-1.5deg);
   }
   .card h1, .card h2 {
@@ -92,6 +94,33 @@
   button.play:hover { transform: translateY(-2px); }
   button.play:active { transform: translateY(3px); box-shadow: 0 2px 0 var(--ink); }
   button:focus-visible { outline: 3px dashed var(--pee); outline-offset: 4px; }
+  .board { display: grid; gap: 4px; text-align: left; }
+  .board .board-title { font-size: 22px; color: var(--ink); -webkit-text-stroke: 0; }
+  .board ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-variant-numeric: tabular-nums; }
+  .board li { display: grid; grid-template-columns: 2.2ch minmax(0, 1fr) auto; gap: 10px; padding: 3px 10px; border-radius: 8px; font-size: 16px; }
+  .board li:nth-child(odd) { background: rgba(42, 29, 20, 0.05); }
+  .board li.me { background: #ffe08a; font-weight: 700; }
+  .board li.note { display: block; text-align: center; opacity: 0.75; background: none; }
+  .board .rk { opacity: 0.6; }
+  .board .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .board .sc { font-weight: 700; }
+  .save { display: grid; gap: 6px; text-align: left; }
+  .save label { font-size: 14px; font-weight: 700; }
+  .save .row { display: flex; gap: 8px; }
+  .save input {
+    flex: 1 1 0; width: 0; min-width: 0;
+    font: 600 16px var(--body); color: var(--ink); background: #fff;
+    padding: 6px 10px; border: 3px solid var(--ink); border-radius: 10px;
+  }
+  .save input:focus-visible { outline: 3px dashed var(--pee); outline-offset: 2px; }
+  .save-btn {
+    font-family: var(--display); font-size: 18px;
+    background: var(--cat); color: var(--ink);
+    border: 3px solid var(--ink); border-radius: 10px;
+    padding: 4px 14px; cursor: pointer;
+  }
+  .save-btn:disabled { opacity: 0.5; cursor: default; }
+  .save .sub:empty { display: none; }
   #mute {
     position: absolute;
     top: calc(12px + env(safe-area-inset-top, 0px));
@@ -118,9 +147,13 @@
         <li><b class="pee">Miss</b><span>and the cat walks over and pees on a plant. Whack it on the way to save it.</span></li>
         <li><b class="keys">Keys</b><span><kbd>Space</kbd> swats the cat once it drops into the low swat zone. Hold <kbd>←</kbd> <kbd>→</kbd> to aim. <kbd>P</kbd> pauses, <kbd>M</kbd> mutes.</span></li>
       </ul>
-      <p class="sub">Two pees kill a plant. Lose all five and it's over.</p>
+      <p class="sub">One pee kills a plant. Lose all three and it's over.</p>
       <button class="play" id="playBtn" type="button">Play</button>
       <p class="sub">or press <kbd>Space</kbd></p>
+      <div class="board">
+        <h2 class="board-title">Top scores</h2>
+        <ol id="boardMenu"><li class="note">Loading…</li></ol>
+      </div>
     </div>
   </div>
 
@@ -130,6 +163,18 @@
       <p class="sub" id="overLine">Your apartment now smells like a litter box.</p>
       <div class="big" id="finalScore">0</div>
       <p class="sub" id="bestLine">Best: 0</p>
+      <form class="save" id="saveForm" novalidate>
+        <label for="playerName">Put your name on the leaderboard</label>
+        <div class="row">
+          <input id="playerName" type="text" maxlength="20" autocomplete="nickname" placeholder="Any name">
+          <button class="save-btn" id="saveBtn" type="submit">Save</button>
+        </div>
+        <p class="sub" id="saveMsg" aria-live="polite"></p>
+      </form>
+      <div class="board">
+        <h2 class="board-title">Top 10</h2>
+        <ol id="boardOver"><li class="note">Loading…</li></ol>
+      </div>
       <button class="play" id="againBtn" type="button">Again!</button>
     </div>
   </div>
@@ -152,7 +197,7 @@
   };
 
   let W = 0, H = 0, groundY = 0, R = 30;
-  const NPLANTS = 5;
+  const NPLANTS = 3;
   let plants = [];
   let state = 'menu';   // menu | play | pee | over
   let peePhase = 'walk';
@@ -166,6 +211,71 @@
   const parts = [], texts = [];
 
   try { best = +localStorage.getItem('whackacat-best') || 0; } catch (e) {}
+
+  // ---------- shared leaderboard (Supabase: anyone can read and add, nobody can edit or delete) ----------
+  const SCORES_URL = 'https://jeevipzjpcnmgtagjuvs.supabase.co/rest/v1/scores';
+  const SB_HEADERS = { apikey: 'sb_publishable_KiLxxoBLqqoczVmQ3PoTzA_gUXPMpyo', 'Content-Type': 'application/json' };
+  const nameInput = document.getElementById('playerName');
+  const saveBtn = document.getElementById('saveBtn');
+  const saveMsg = document.getElementById('saveMsg');
+  let board = [], mySavedId = null, scoreSaved = false;
+  try { nameInput.value = localStorage.getItem('whackacat-name') || ''; } catch (e) {}
+
+  async function loadBoard() {
+    try {
+      const r = await fetch(SCORES_URL + '?select=id,name,score&order=score.desc,created_at.asc&limit=10', { headers: SB_HEADERS });
+      if (!r.ok) throw new Error(r.status);
+      board = await r.json();
+    } catch (e) { board = null; }
+    renderBoard(document.getElementById('boardMenu'), 5);
+    renderBoard(document.getElementById('boardOver'), 10);
+  }
+  function renderBoard(el, n) {
+    el.textContent = '';
+    const note = text => { const li = document.createElement('li'); li.className = 'note'; li.textContent = text; el.append(li); };
+    if (board === null) return note("The leaderboard can't be reached right now.");
+    if (!board.length) return note('No scores yet. Be the first!');
+    board.slice(0, n).forEach((row, i) => {
+      const li = document.createElement('li');
+      if (row.id === mySavedId) li.className = 'me';
+      [[String(i + 1), 'rk'], [row.name, 'nm'], [String(row.score), 'sc']].forEach(([t, c]) => {
+        const s = document.createElement('span'); s.className = c; s.textContent = t; li.append(s);
+      });
+      el.append(li);
+    });
+  }
+  function resetSaveForm() {
+    scoreSaved = false;
+    saveBtn.disabled = score < 1;
+    nameInput.disabled = score < 1;
+    saveMsg.textContent = score < 1 ? 'Score at least 1 point to get on the leaderboard.' : '';
+  }
+  document.getElementById('saveForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    if (scoreSaved || score < 1) return;
+    const name = nameInput.value.trim().slice(0, 20);
+    if (!name) { saveMsg.textContent = 'Type a name first.'; nameInput.focus(); return; }
+    saveBtn.disabled = true; saveMsg.textContent = 'Saving…';
+    try {
+      const r = await fetch(SCORES_URL, {
+        method: 'POST',
+        headers: { ...SB_HEADERS, Prefer: 'return=representation' },
+        body: JSON.stringify({ name, score })
+      });
+      if (!r.ok) throw new Error(r.status);
+      const rows = await r.json();
+      mySavedId = rows[0] && rows[0].id;
+      scoreSaved = true; nameInput.disabled = true;
+      try { localStorage.setItem('whackacat-name', name); } catch (err) {}
+      await loadBoard();
+      const rank = board ? board.findIndex(row => row.id === mySavedId) : -1;
+      saveMsg.textContent = rank >= 0 ? `Saved! You're #${rank + 1}.` : 'Saved! Not in the top 10 yet.';
+      document.getElementById('againBtn').focus();
+    } catch (err) {
+      saveBtn.disabled = false;
+      saveMsg.textContent = "Couldn't save. Check your connection and try again.";
+    }
+  });
 
   // ---------- sound ----------
   let ac = null, muted = false;
@@ -316,7 +426,10 @@
       'Maybe try fake plants next time.'
     ];
     document.getElementById('overLine').textContent = lines[Math.floor(Math.random() * lines.length)];
+    resetSaveForm();
     overEl.hidden = false;
+    loadBoard();
+    if (score >= 1 && matchMedia('(pointer: fine)').matches) nameInput.focus();
     sadTrombone();
   }
   function beginPee() {
@@ -363,6 +476,7 @@
 
   const isKey = (e, ...names) => names.includes(e.key.length === 1 ? e.key.toLowerCase() : e.key);
   window.addEventListener('keydown', e => {
+    if (e.target instanceof HTMLInputElement) return;
     if (isKey(e, 'm')) { toggleMute(); return; }
     if (state === 'menu' || state === 'over') {
       if (isKey(e, ' ', 'Enter')) {
@@ -450,11 +564,11 @@
         }
       } else if (peePhase === 'pee') {
         peeT -= dt;
-        peeTarget.puddle = Math.min(1 + (2 - peeTarget.hp), peeTarget.puddle + dt * 0.7);
+        peeTarget.puddle = Math.min(1.5, peeTarget.puddle + dt * 0.7);
+        if (peeTarget.hp === 2 && peeT < 0.7) peeTarget.hp = 1;
         if (peeT <= 0) {
-          peeTarget.hp--;
-          float(peeTarget.x, groundY - peeTarget.h - peeTarget.leafH - 10,
-            peeTarget.hp > 0 ? 'Wilting!' : 'RIP plant', C.pee, 28);
+          peeTarget.hp = 0;
+          float(peeTarget.x, groundY - peeTarget.h - peeTarget.leafH - 10, 'RIP plant', C.pee, 28);
           if (plants.every(p => p.hp <= 0)) { gameOver(); return; }
           state = 'play';
           cat.vy = -jumpSpeed() * 0.95;
@@ -722,6 +836,7 @@
   newPlants();
   resize();
   resetCat();
+  loadBoard();
   requestAnimationFrame(frame);
 })();
 </script>
