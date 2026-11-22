@@ -148,6 +148,7 @@
         <li><b class="pee">Miss</b><span>and the cat walks over and pees on a plant. Whack it on the way to save it.</span></li>
         <li><b class="good">Cats</b><span>A second cat joins at 100 points and a third at 300. Keep them all up.</span></li>
         <li><b class="power">Broom</b><span>Sometimes a broom falls. Tap it for 5 seconds of superpowers: a floaty cat, a giant swat, double points and no pee.</span></li>
+        <li><b class="keys">Ads</b><span>Every so often Zorp the alien takes over for a commercial break. Everything freezes until Zorp is done dancing.</span></li>
         <li><b class="keys">Keys</b><span><kbd>Space</kbd> swats the cat once it drops into the low swat zone. Hold <kbd>←</kbd> <kbd>→</kbd> to aim. <kbd>P</kbd> pauses, <kbd>M</kbd> mutes.</span></li>
       </ul>
       <p class="sub">One pee kills a plant. Lose all three and it's over.</p>
@@ -224,6 +225,16 @@
   // broom power-up: falls at random times, tap it for POWER_TIME seconds of superpowers
   const POWER_TIME = 5;
   let broom = null, nextBroom = 0, power = 0;
+  // commercial break: every so often the game freezes and Zorp the alien dances
+  const AD_TIME = 5;
+  const AD_LINES = [
+    "Zorp's Cat Repellent: now with 40% more zorp.",
+    'Visit beautiful Planet Litterbox!',
+    'Zorp reminds you: water your plants.',
+    'Fake plants. Real peace of mind.',
+    'This break brought to you by brooms.'
+  ];
+  let ad = null, nextAd = 0, adGain = null;
   const powered = () => power > 0;
 
   try { best = +localStorage.getItem('whackacat-best') || 0; } catch (e) {}
@@ -359,6 +370,31 @@
       o.connect(g).connect(a.destination); o.start(t); o.stop(t + 0.3);
     });
   }
+  function adJingle() {
+    const a = audio(); if (!a) return;
+    adGain = a.createGain(); adGain.gain.value = 1; adGain.connect(a.destination);
+    const beat = 60 / 150, t0 = a.currentTime + 0.05;
+    const bass = [110, 110, 165, 147, 110, 110, 196, 165];
+    const tune = [440, 523, 587, 659, 587, 523, 659, 784];
+    for (let i = 0; i < 24; i++) {
+      const t = t0 + i * beat / 2;
+      if (t > t0 + AD_TIME - 0.6) break;
+      const notes = [[i % 2 ? 0 : bass[(i / 2 | 0) % 8], 'square', 0.07], [tune[i % 8] * (i % 16 < 8 ? 1 : 1.5), 'triangle', 0.06]];
+      notes.forEach(([fr, type, vol]) => {
+        if (!fr) return;
+        const o = a.createOscillator(), g = a.createGain();
+        o.type = type; o.frequency.setValueAtTime(fr, t);
+        env(g, t, vol, 0.01, beat * 0.4);
+        o.connect(g).connect(adGain); o.start(t); o.stop(t + beat * 0.5);
+      });
+    }
+  }
+  function stopJingle() {
+    if (!adGain || !ac) return;
+    const g = adGain; adGain = null;
+    g.gain.setTargetAtTime(0.0001, ac.currentTime, 0.05);
+    setTimeout(() => g.disconnect(), 400);
+  }
   function toggleMute() {
     muted = !muted;
     muteBtn.textContent = muted ? 'Sound: off' : 'Sound: on';
@@ -437,6 +473,7 @@
     cats = [makeCat(0)];
     newPlants(); resetCat(cats[0]);
     broom = null; power = 0; nextBroom = time + 8 + Math.random() * 8;
+    ad = null; stopJingle(); nextAd = time + 30 + Math.random() * 15;
     state = 'play';
     menuEl.hidden = true; overEl.hidden = true;
     meow();
@@ -444,6 +481,7 @@
   function gameOver() {
     state = 'over'; overAt = time;
     broom = null; power = 0;
+    ad = null; stopJingle();
     cats.forEach(c => { c.mode = 'air'; });
     if (score > best) { best = score; try { localStorage.setItem('whackacat-best', best); } catch (e) {} }
     document.getElementById('finalScore').textContent = score + (score === 1 ? ' point' : ' points');
@@ -486,6 +524,19 @@
     float(W / 2, H * 0.32, c.look.name + ' joins in!', C.pee, 40);
     meow();
   }
+
+  function startAd() {
+    ad = { t: 0, line: AD_LINES[Math.floor(Math.random() * AD_LINES.length)] };
+    keys.left = keys.right = false;
+    adJingle();
+  }
+  function endAd() {
+    ad = null; stopJingle();
+    nextAd = time + 50 + Math.random() * 30;
+    float(W / 2, H * 0.35, 'Back to the cats!', C.card, 34);
+  }
+  // only break in while every cat is in the air and on its way up, so nobody gets dropped by it
+  const adSafe = () => state === 'play' && cats.every(c => c.mode === 'air' && c.vy < 0);
 
   // ---------- input ----------
   const canWhack = c => state === 'play' && c.mode !== 'pee';
@@ -560,6 +611,10 @@
       return;
     }
     if (isKey(e, 'p', 'Escape')) { paused = !paused; return; }
+    if (ad) {
+      if (isKey(e, ' ', 'Enter', 'ArrowUp', 'w')) { e.preventDefault(); if (!e.repeat && ad.t > 1) endAd(); }
+      return;
+    }
     if (isKey(e, 'ArrowLeft', 'a')) { keys.left = true; usingKeys = true; e.preventDefault(); }
     else if (isKey(e, 'ArrowRight', 'd')) { keys.right = true; usingKeys = true; e.preventDefault(); }
     else if (isKey(e, ' ', 'ArrowUp', 'w', 'Enter')) {
@@ -577,6 +632,7 @@
     e.preventDefault();
     usingKeys = false;
     if (paused) { paused = false; return; }
+    if (ad) { if (ad.t > 1) endAd(); return; }
     if (state !== 'play') return;
     const b = cv.getBoundingClientRect();
     const px = e.clientX - b.left, py = e.clientY - b.top;
@@ -667,6 +723,12 @@
 
   function update(dt) {
     time += dt;
+    if (ad) {
+      ad.t += dt;
+      if (ad.t >= AD_TIME) endAd();
+      return;
+    }
+    if (time >= nextAd && adSafe()) { startAd(); return; }
     swatCool = Math.max(0, swatCool - dt);
     plants.forEach(p => p.shake = Math.max(0, p.shake - dt));
     if (power > 0) {
@@ -915,6 +977,117 @@
     }
   }
 
+  function drawAlien(x, y, s, t) {
+    // Zorp: a lime blob with three eyes and springy antennae, dancing to the jingle
+    const beat = t * Math.PI * 2 * 2.5;           // 150 bpm
+    const bob = Math.abs(Math.sin(beat / 2)) * s * 0.18;
+    const sway = Math.sin(beat / 4) * 0.18;
+    const step = Math.sin(beat / 2);
+    const body = '#9be15d', bodyDark = '#5fa83a', ink = C.ink;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath(); ctx.ellipse(0, s * 1.55, s * 0.9 - bob, s * 0.15, 0, 0, 7); ctx.fill();
+    // legs (stepping)
+    [-1, 1].forEach(side => {
+      const lift = Math.max(0, step * side) * s * 0.35;
+      ctx.strokeStyle = ink; ctx.lineWidth = s * 0.26;
+      ctx.beginPath(); ctx.moveTo(side * s * 0.35, s * 0.8 - bob); ctx.lineTo(side * s * 0.45, s * 1.45 - lift); ctx.stroke();
+      ctx.strokeStyle = body; ctx.lineWidth = s * 0.16;
+      ctx.beginPath(); ctx.moveTo(side * s * 0.35, s * 0.8 - bob); ctx.lineTo(side * s * 0.45, s * 1.45 - lift); ctx.stroke();
+      ctx.fillStyle = ink; ctx.beginPath(); ctx.ellipse(side * s * 0.55, s * 1.5 - lift, s * 0.22, s * 0.12, 0, 0, 7); ctx.fill();
+    });
+    ctx.translate(0, -bob);
+    ctx.rotate(sway);
+    // arms (waving, opposite phase)
+    [-1, 1].forEach(side => {
+      const wave = Math.sin(beat / 2 + (side > 0 ? Math.PI : 0));
+      const ax = side * s * 0.75, ay = s * 0.15;
+      const hx = side * s * (1.25 + 0.15 * wave), hy = -s * (0.25 + 0.6 * wave);
+      const arm = (col, w) => { ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo(side * s * 1.25, ay, hx, hy); ctx.stroke(); };
+      arm(ink, s * 0.24); arm(body, s * 0.14);
+      ctx.fillStyle = ink; ctx.beginPath(); ctx.arc(hx, hy, s * 0.17, 0, 7); ctx.fill();
+      ctx.fillStyle = body; ctx.beginPath(); ctx.arc(hx, hy, s * 0.11, 0, 7); ctx.fill();
+    });
+    // antennae (springy)
+    [-1, 1].forEach(side => {
+      const wob = Math.sin(beat + side) * s * 0.15;
+      const tx = side * s * 0.45 + wob, ty = -s * 1.55;
+      ctx.strokeStyle = ink; ctx.lineWidth = s * 0.08;
+      ctx.beginPath(); ctx.moveTo(side * s * 0.25, -s * 0.85); ctx.quadraticCurveTo(side * s * 0.3, -s * 1.3, tx, ty); ctx.stroke();
+      ctx.fillStyle = ink; ctx.beginPath(); ctx.arc(tx, ty, s * 0.16, 0, 7); ctx.fill();
+      ctx.fillStyle = side < 0 ? C.flower : C.pee; ctx.beginPath(); ctx.arc(tx, ty, s * 0.11, 0, 7); ctx.fill();
+    });
+    // body: a squashy blob
+    const sq = 1 + Math.sin(beat) * 0.04;
+    ctx.fillStyle = ink; ctx.beginPath(); ctx.ellipse(0, 0, s * 0.92 * sq, s * 1.0 / sq, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = body; ctx.beginPath(); ctx.ellipse(0, 0, s * 0.84 * sq, s * 0.92 / sq, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = bodyDark;
+    [[-0.45, 0.45, 0.1], [0.5, 0.2, 0.08], [0.2, 0.62, 0.06]].forEach(([sx, sy, r]) => { ctx.beginPath(); ctx.arc(sx * s, sy * s, r * s, 0, 7); ctx.fill(); });
+    // three eyes, blinking now and then
+    const blink = (t % 1.6) < 0.1;
+    [[-0.38, -0.32, 0.2], [0.38, -0.32, 0.2], [0, -0.62, 0.15]].forEach(([ex, ey, er], i) => {
+      ex *= s; ey *= s; er *= s;
+      if (blink) { ctx.strokeStyle = ink; ctx.lineWidth = s * 0.06; ctx.beginPath(); ctx.moveTo(ex - er, ey); ctx.lineTo(ex + er, ey); ctx.stroke(); return; }
+      ctx.fillStyle = ink; ctx.beginPath(); ctx.arc(ex, ey, er + s * 0.05, 0, 7); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ex, ey, er, 0, 7); ctx.fill();
+      const look = Math.sin(beat / 4 + i) * er * 0.35;
+      ctx.fillStyle = ink; ctx.beginPath(); ctx.arc(ex + look, ey + er * 0.1, er * 0.5, 0, 7); ctx.fill();
+    });
+    // big grin
+    ctx.fillStyle = ink;
+    ctx.beginPath(); ctx.arc(0, s * 0.05, s * 0.38, 0.15 * Math.PI, 0.85 * Math.PI); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = C.flower;
+    ctx.beginPath(); ctx.ellipse(0, s * 0.33, s * 0.14, s * 0.07, 0, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawAd() {
+    const t = ad.t;
+    // disco backdrop: slowly turning rays
+    ctx.fillStyle = 'rgba(20,40,42,0.82)'; ctx.fillRect(0, 0, W, H);
+    const cx = W / 2, cy = H * 0.52, rays = 16, rr = Math.hypot(W, H);
+    const cols = [C.pee, C.flower, C.sky, '#8ff09a'];
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(t * 0.6);
+    ctx.globalAlpha = 0.18;
+    for (let i = 0; i < rays; i++) {
+      ctx.fillStyle = cols[i % cols.length];
+      const a0 = i / rays * Math.PI * 2, a1 = a0 + Math.PI / rays;
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, rr, a0, a1); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    // sparkles
+    for (let i = 0; i < 14; i++) {
+      const sx = (i * 137 % 100) / 100 * W, sy = ((i * 61 + t * 40) % 100) / 100 * H;
+      ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t * 6 + i);
+      ctx.fillStyle = cols[i % cols.length];
+      ctx.beginPath(); ctx.arc(sx, sy, 3, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    const s = Math.min(W, H) * 0.13;
+    const slide = Math.min(1, t * 3);                // slides in from the left
+    drawAlien(cx - (1 - slide) * W * 0.7, cy, s, t);
+
+    const text = (txt, y, size, fill) => {
+      ctx.font = `${size}px Chewy, "Comic Sans MS", sans-serif`;
+      const fit = (W - 32) / ctx.measureText(txt).width;   // shrink long lines to fit phone screens
+      if (fit < 1) { size = Math.floor(size * fit); ctx.font = `${size}px Chewy, "Comic Sans MS", sans-serif`; }
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineJoin = 'round'; ctx.lineWidth = size * 0.2; ctx.strokeStyle = C.ink; ctx.strokeText(txt, cx, y);
+      ctx.fillStyle = fill; ctx.fillText(txt, cx, y);
+    };
+    const big = Math.min(54, W * 0.11);
+    text('COMMERCIAL BREAK', H * 0.12, big, C.pee);
+    text(ad.line, H * 0.12 + big * 0.95, Math.min(24, W * 0.052), C.card);
+    const left = Math.max(1, Math.ceil(AD_TIME - t));
+    text('Back to the cats in ' + left + '…', H * 0.88, Math.min(26, W * 0.06), C.card);
+    if (t > 1) text(usingKeys ? 'Space to skip' : 'Tap to skip', H * 0.88 + 30, 18, C.sky);
+  }
+
   function drawHUD() {
     ctx.textBaseline = 'top';
     const pad = 16;
@@ -992,6 +1165,7 @@
     });
     ctx.globalAlpha = 1;
     drawHUD();
+    if (ad) drawAd();
     if (paused) {
       ctx.fillStyle = 'rgba(20,40,42,0.5)'; ctx.fillRect(0, 0, W, H);
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
