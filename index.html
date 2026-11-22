@@ -146,6 +146,7 @@
         <li><b class="good">Tap</b><span>the cat to bonk it back into the air. Combos score more.</span></li>
         <li><b class="bad">-5</b><span>for every tap that lands on a houseplant.</span></li>
         <li><b class="pee">Miss</b><span>and the cat walks over and pees on a plant. Whack it on the way to save it.</span></li>
+        <li><b class="good">Cats</b><span>A second cat joins at 100 points and a third at 300. Keep them all up.</span></li>
         <li><b class="power">Broom</b><span>Sometimes a broom falls. Tap it for 5 seconds of superpowers: a floaty cat, a giant swat, double points and no pee.</span></li>
         <li><b class="keys">Keys</b><span><kbd>Space</kbd> swats the cat once it drops into the low swat zone. Hold <kbd>←</kbd> <kbd>→</kbd> to aim. <kbd>P</kbd> pauses, <kbd>M</kbd> mutes.</span></li>
       </ul>
@@ -201,15 +202,24 @@
   let W = 0, H = 0, groundY = 0, R = 30;
   const NPLANTS = 3;
   let plants = [];
-  let state = 'menu';   // menu | play | pee | over
-  let peePhase = 'walk';
-  let peeTarget = null, peeT = 0, peeSide = 1;
+  let state = 'menu';   // menu | play | over. Each cat has its own mode: air | walk | pee
   let score = 0, combo = 0, whacks = 0, best = 0, saves = 0;
   let time = 0, overAt = 0;
   // keyboard play: Space swats when the cat is inside the low "swat zone", arrows aim
   const keys = { left: false, right: false };
   let swatCool = 0, usingKeys = false, paused = false;
-  const cat = { x: 0, y: 0, vx: 0, vy: 0, rot: 0, spin: 0, face: 1, squint: 0, step: 0 };
+  // more cats join as the score climbs
+  const CAT_LOOKS = [
+    { name: 'Mr. Biscuits', cat: '#f29a3c', dark: '#c96f1c', belly: '#ffe7c7' },
+    { name: 'Pickles', cat: '#9aa5b1', dark: '#66717d', belly: '#eef1f4' },
+    { name: 'Noodle', cat: '#f4efe6', dark: '#b9a58c', belly: '#ffffff' }
+  ];
+  const CAT_AT = [100, 300];   // score that brings in cat #2, then cat #3
+  const makeCat = i => ({
+    x: 0, y: 0, vx: 0, vy: 0, rot: 0, spin: 0, face: 1, squint: 0, step: 0,
+    mode: 'air', peeTarget: null, peeT: 0, peeSide: 1, look: CAT_LOOKS[i]
+  });
+  let cats = [makeCat(0)];
   const parts = [], texts = [];
   // broom power-up: falls at random times, tap it for POWER_TIME seconds of superpowers
   const POWER_TIME = 5;
@@ -366,7 +376,7 @@
     groundY = H - Math.max(56, H * 0.13);
     R = Math.max(24, Math.min(W * 0.075, H * 0.06));
     layoutPlants();
-    cat.x = Math.min(Math.max(cat.x, R), W - R);
+    cats.forEach(c => { c.x = Math.min(Math.max(c.x, R), W - R); });
   }
   function layoutPlants() {
     const slot = W / NPLANTS;
@@ -392,19 +402,19 @@
   const gravity = () => H * 1.15 * difficulty() * (powered() ? 0.5 : 1);
   const jumpSpeed = () => Math.sqrt(2 * gravity() * (groundY - R) * 0.6);
 
-  function launch(px, auto) {
-    const off = (cat.x - px) / R;
-    cat.vy = -jumpSpeed() * (0.9 + Math.random() * 0.15);
-    cat.vx = cat.vx * 0.4 + off * W * 0.3 + (Math.random() - 0.5) * W * 0.18;
+  function launch(c, px, auto) {
+    const off = (c.x - px) / R;
+    c.vy = -jumpSpeed() * (0.9 + Math.random() * 0.15);
+    c.vx = c.vx * 0.4 + off * W * 0.3 + (Math.random() - 0.5) * W * 0.18;
     const lim = W * 0.7;
-    cat.vx = Math.max(-lim, Math.min(lim, cat.vx));
-    cat.spin = off * 7 + (Math.random() - 0.5) * 6;
-    cat.squint = 0.35;
+    c.vx = Math.max(-lim, Math.min(lim, c.vx));
+    c.spin = off * 7 + (Math.random() - 0.5) * 6;
+    c.squint = 0.35;
     for (let i = 0; i < (auto ? 4 : 10); i++) {
       parts.push({
-        x: cat.x, y: cat.y, vx: (Math.random() - 0.5) * 260, vy: (Math.random() - 0.8) * 260,
+        x: c.x, y: c.y, vx: (Math.random() - 0.5) * 260, vy: (Math.random() - 0.8) * 260,
         life: 0.6 + Math.random() * 0.4, size: 3 + Math.random() * 4,
-        color: Math.random() < 0.5 ? C.cat : C.belly
+        color: Math.random() < 0.5 ? c.look.cat : c.look.belly
       });
     }
   }
@@ -413,18 +423,19 @@
   }
 
   // ---------- game flow ----------
-  function resetCat() {
-    cat.x = W * 0.5; cat.y = H * 0.3; cat.vx = (Math.random() - 0.5) * W * 0.2;
-    cat.vy = -H * 0.3; cat.rot = 0; cat.spin = 2;
+  function resetCat(c) {
+    c.x = W * 0.5; c.y = H * 0.3; c.vx = (Math.random() - 0.5) * W * 0.2;
+    c.vy = -H * 0.3; c.rot = 0; c.spin = 2;
   }
   function start() {
-    if (state === 'play' || state === 'pee') return;
+    if (state === 'play') return;
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     paused = false;
     audio();
     score = 0; combo = 0; whacks = 0; saves = 0;
     parts.length = 0; texts.length = 0;
-    newPlants(); resetCat();
+    cats = [makeCat(0)];
+    newPlants(); resetCat(cats[0]);
     broom = null; power = 0; nextBroom = time + 8 + Math.random() * 8;
     state = 'play';
     menuEl.hidden = true; overEl.hidden = true;
@@ -433,6 +444,7 @@
   function gameOver() {
     state = 'over'; overAt = time;
     broom = null; power = 0;
+    cats.forEach(c => { c.mode = 'air'; });
     if (score > best) { best = score; try { localStorage.setItem('whackacat-best', best); } catch (e) {} }
     document.getElementById('finalScore').textContent = score + (score === 1 ? ' point' : ' points');
     document.getElementById('bestLine').textContent = 'Best: ' + best + ' · Plants saved mid-stroll: ' + saves;
@@ -449,23 +461,38 @@
     if (score >= 1 && matchMedia('(pointer: fine)').matches) nameInput.focus();
     sadTrombone();
   }
-  function beginPee() {
+  function pickTarget(c) {
     const alive = plants.filter(p => p.hp > 0);
-    if (!alive.length) { gameOver(); return; }
-    peeTarget = alive.reduce((a, b) => Math.abs(b.x - cat.x) < Math.abs(a.x - cat.x) ? b : a);
-    peeSide = cat.x < peeTarget.x ? -1 : 1;
-    if (peeTarget.x + peeSide * (peeTarget.w * 0.5 + R) < R || peeTarget.x + peeSide * (peeTarget.w * 0.5 + R) > W - R) peeSide = -peeSide;
-    state = 'pee'; peePhase = 'walk';
-    cat.y = groundY - R * 0.95; cat.vx = 0; cat.vy = 0; cat.rot = 0; cat.spin = 0;
+    if (!alive.length) return false;
+    c.peeTarget = alive.reduce((a, b) => Math.abs(b.x - c.x) < Math.abs(a.x - c.x) ? b : a);
+    const t = c.peeTarget;
+    c.peeSide = c.x < t.x ? -1 : 1;
+    const spot = side => t.x + side * (t.w * 0.5 + R);
+    if (spot(c.peeSide) < R || spot(c.peeSide) > W - R) c.peeSide = -c.peeSide;
+    return true;
+  }
+  function beginPee(c) {
+    if (!pickTarget(c)) { gameOver(); return; }
+    c.mode = 'walk';
+    c.y = groundY - R * 0.95; c.vx = 0; c.vy = 0; c.rot = 0; c.spin = 0;
     combo = 0;
-    float(cat.x, cat.y - R * 1.6, 'Uh oh...', C.pee, 30);
+    float(c.x, c.y - R * 1.6, 'Uh oh...', C.pee, 30);
+  }
+  function addCat() {
+    const c = makeCat(cats.length);
+    c.x = R * 2 + Math.random() * (W - R * 4); c.y = R;
+    c.vx = (Math.random() - 0.5) * W * 0.2; c.vy = 0; c.spin = 3;
+    cats.push(c);
+    float(W / 2, H * 0.32, c.look.name + ' joins in!', C.pee, 40);
+    meow();
   }
 
   // ---------- input ----------
-  const canWhack = () => state === 'play' || (state === 'pee' && peePhase === 'walk');
-  function whackCat(px, py) {
-    if (state === 'pee') {
-      state = 'play'; saves++; score += 3;
+  const canWhack = c => state === 'play' && c.mode !== 'pee';
+  const inSwatZone = c => canWhack(c) && (c.mode === 'walk' || powered() || c.y > zoneTop());
+  function whackCat(c, px, py) {
+    if (c.mode === 'walk') {
+      c.mode = 'air'; saves++; score += 3;
       float(px, py - 30, 'Plant saved! +3', '#8ff09a', 30);
     }
     combo++; whacks++;
@@ -474,7 +501,7 @@
     const words = ['WHACK!', 'BONK!', 'MREOW!', 'BOOP!', 'SMACK!', 'FLOOF!'];
     float(px, py, words[Math.floor(Math.random() * words.length)] + ' +' + pts, C.card, combo >= 5 ? 32 : 26);
     if (combo > 0 && combo % 10 === 0) float(W / 2, H * 0.35, combo + ' combo!', C.pee, 44);
-    launch(px);
+    launch(c, px);
     meow();
   }
 
@@ -507,14 +534,18 @@
     swatCool = 0.25;
     let grabbed = false;
     if (broom && !broom.fade && broom.y > zoneTop()) { grabBroom(); grabbed = true; }
-    if (!(state === 'pee' || powered() || cat.y > zoneTop())) {
+    const ready = cats.filter(inSwatZone);
+    if (!ready.length) {
       if (grabbed) return;
       whiff();
-      float(cat.x, zoneTop() - 18, 'Too high!', C.card, 20);
+      const hi = cats.find(canWhack) || cats[0];
+      float(hi.x, zoneTop() - 18, 'Too high!', C.card, 20);
       return;
     }
+    // swat the lowest cat first: it's the one about to land
+    const c = ready.reduce((a, b) => b.y > a.y ? b : a);
     const aim = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
-    whackCat(cat.x - aim * R * 0.8, cat.y);
+    whackCat(c, c.x - aim * R * 0.8, c.y);
   }
 
   const isKey = (e, ...names) => names.includes(e.key.length === 1 ? e.key.toLowerCase() : e.key);
@@ -533,7 +564,7 @@
     else if (isKey(e, 'ArrowRight', 'd')) { keys.right = true; usingKeys = true; e.preventDefault(); }
     else if (isKey(e, ' ', 'ArrowUp', 'w', 'Enter')) {
       e.preventDefault(); usingKeys = true;
-      if (!paused && !e.repeat && canWhack()) keySwat();
+      if (!paused && !e.repeat && state === 'play') keySwat();
     }
   });
   window.addEventListener('keyup', e => {
@@ -546,14 +577,17 @@
     e.preventDefault();
     usingKeys = false;
     if (paused) { paused = false; return; }
-    if (!canWhack()) return;
+    if (state !== 'play') return;
     const b = cv.getBoundingClientRect();
     const px = e.clientX - b.left, py = e.clientY - b.top;
     if (broomHit(px, py)) { grabBroom(); return; }
-    if (Math.hypot(px - cat.x, py - cat.y) <= R * (powered() ? 3.2 : 1.4)) {
-      whackCat(px, py);
-      return;
-    }
+    const reach = R * (powered() ? 3.2 : 1.4);
+    let hit = null, hd = Infinity;
+    cats.forEach(c => {
+      const d = Math.hypot(px - c.x, py - c.y);
+      if (canWhack(c) && d <= reach && d < hd) { hit = c; hd = d; }
+    });
+    if (hit) { whackCat(hit, px, py); return; }
     for (const p of plants) {
       if (plantHit(p, px, py)) {
         if (powered()) { p.shake = 0.3; whiff(); return; }
@@ -567,21 +601,85 @@
   });
 
   // ---------- update ----------
+  function updateCat(c, dt) {
+    c.squint = Math.max(0, c.squint - dt);
+    if (c.mode === 'air' || state !== 'play') {
+      if (state === 'over') { c.vy += gravity() * dt * 0.5; }
+      else c.vy += gravity() * dt;
+      c.x += c.vx * dt; c.y += c.vy * dt;
+      c.vx *= Math.pow(0.7, dt);
+      c.rot += c.spin * dt; c.spin *= Math.pow(0.4, dt);
+      if (Math.abs(c.vx) > 5) c.face = c.vx > 0 ? 1 : -1;
+      if (c.x < R) { c.x = R; c.vx = Math.abs(c.vx) * 0.8; }
+      if (c.x > W - R) { c.x = W - R; c.vx = -Math.abs(c.vx) * 0.8; }
+      if (c.y < R) { c.y = R; c.vy = Math.abs(c.vy) * 0.3; }
+
+      if (state === 'menu') {
+        // attract mode: an invisible player keeps the cat up
+        if (c.vy > 0 && c.y > groundY - R * 3.5) launch(c, c.x + (Math.random() - 0.5) * R * 1.6, true);
+      } else if (state === 'over') {
+        if (c.y > groundY - R) { c.y = groundY - R; c.vy = 0; c.vx = 0; c.spin = 0; c.rot *= 0.8; }
+      } else if (c.y + R >= groundY && powered()) {
+        // the broom sweeps the cat back up: no pee while powered
+        c.y = groundY - R;
+        float(c.x, groundY - R * 2.2, 'SWEPT!', '#ffb3cf', 30);
+        combo = 0;
+        launch(c, c.x + (Math.random() - 0.5) * R, true);
+      } else if (c.y + R >= groundY) {
+        c.y = groundY - R;
+        float(c.x, groundY - R * 2.4, 'MISSED!', C.bad, 34);
+        beginPee(c);
+      }
+      if (c.mode === 'air') c.rot = c.rot % (Math.PI * 2);
+      return;
+    }
+    c.rot *= Math.pow(0.001, dt);
+    if (c.mode === 'walk') {
+      // another cat may have finished this plant off first
+      if (c.peeTarget.hp <= 0 && !pickTarget(c)) { gameOver(); return; }
+      const t = c.peeTarget;
+      const tx = t.x + c.peeSide * (t.w * 0.5 + R * 0.95);
+      const dx = tx - c.x;
+      const sp = W * 0.12 + R * 1.2;
+      if (Math.abs(dx) < 3) {
+        c.x = tx; c.mode = 'pee'; c.peeT = 1.4; c.face = c.peeSide; pss();
+      } else {
+        c.x += Math.sign(dx) * Math.min(Math.abs(dx), sp * dt);
+        c.face = Math.sign(dx); c.step += dt * 14;
+      }
+    } else if (c.mode === 'pee') {
+      const t = c.peeTarget;
+      c.peeT -= dt;
+      t.puddle = Math.min(1.5, t.puddle + dt * 0.7);
+      if (t.hp === 2 && c.peeT < 0.7) t.hp = 1;
+      if (c.peeT <= 0) {
+        if (t.hp > 0) float(t.x, groundY - t.h - t.leafH - 10, 'RIP plant', C.pee, 28);
+        t.hp = 0;
+        if (plants.every(p => p.hp <= 0)) { gameOver(); return; }
+        c.mode = 'air';
+        c.vy = -jumpSpeed() * 0.95;
+        c.vx = (W / 2 - c.x) * 0.6;
+        c.spin = 3;
+        meow();
+      }
+    }
+  }
+
   function update(dt) {
     time += dt;
     swatCool = Math.max(0, swatCool - dt);
-    cat.squint = Math.max(0, cat.squint - dt);
     plants.forEach(p => p.shake = Math.max(0, p.shake - dt));
     if (power > 0) {
       power = Math.max(0, power - dt);
-      if (power === 0 && (state === 'play' || state === 'pee')) float(W / 2, H * 0.3, 'Power gone!', C.card, 30);
-      if (Math.random() < dt * 30) parts.push({
-        x: cat.x + (Math.random() - 0.5) * R * 2, y: cat.y + (Math.random() - 0.5) * R * 2,
+      if (power === 0 && state === 'play') float(W / 2, H * 0.3, 'Power gone!', C.card, 30);
+      const sc = cats[Math.floor(Math.random() * cats.length)];
+      if (Math.random() < dt * 30 * cats.length) parts.push({
+        x: sc.x + (Math.random() - 0.5) * R * 2, y: sc.y + (Math.random() - 0.5) * R * 2,
         vx: (Math.random() - 0.5) * 60, vy: -40 - Math.random() * 60, life: 0.6, size: 2 + Math.random() * 3,
         color: Math.random() < 0.5 ? C.pee : '#ff7aa8'
       });
     }
-    if (state === 'play' || state === 'pee') {
+    if (state === 'play') {
       if (!broom && !powered() && time >= nextBroom) spawnBroom();
       if (broom) {
         if (broom.fade) {
@@ -598,62 +696,8 @@
       }
     }
 
-    if (state === 'play' || state === 'menu' || state === 'over') {
-      if (state === 'over') { cat.vy += gravity() * dt * 0.5; }
-      else cat.vy += gravity() * dt;
-      cat.x += cat.vx * dt; cat.y += cat.vy * dt;
-      cat.vx *= Math.pow(0.7, dt);
-      cat.rot += cat.spin * dt; cat.spin *= Math.pow(0.4, dt);
-      if (Math.abs(cat.vx) > 5) cat.face = cat.vx > 0 ? 1 : -1;
-      if (cat.x < R) { cat.x = R; cat.vx = Math.abs(cat.vx) * 0.8; }
-      if (cat.x > W - R) { cat.x = W - R; cat.vx = -Math.abs(cat.vx) * 0.8; }
-      if (cat.y < R) { cat.y = R; cat.vy = Math.abs(cat.vy) * 0.3; }
-
-      if (state === 'menu') {
-        // attract mode: an invisible player keeps the cat up
-        if (cat.vy > 0 && cat.y > groundY - R * 3.5) launch(cat.x + (Math.random() - 0.5) * R * 1.6, true);
-      } else if (state === 'over') {
-        if (cat.y > groundY - R) { cat.y = groundY - R; cat.vy = 0; cat.vx = 0; cat.spin = 0; cat.rot *= 0.8; }
-      } else if (cat.y + R >= groundY && powered()) {
-        // the broom sweeps the cat back up: no pee while powered
-        cat.y = groundY - R;
-        float(cat.x, groundY - R * 2.2, 'SWEPT!', '#ffb3cf', 30);
-        combo = 0;
-        launch(cat.x + (Math.random() - 0.5) * R, true);
-      } else if (cat.y + R >= groundY) {
-        cat.y = groundY - R;
-        float(cat.x, groundY - R * 2.4, 'MISSED!', C.bad, 34);
-        beginPee();
-      }
-      if (state !== 'pee') cat.rot = cat.rot % (Math.PI * 2);
-    } else if (state === 'pee') {
-      cat.rot *= Math.pow(0.001, dt);
-      if (peePhase === 'walk') {
-        const tx = peeTarget.x + peeSide * (peeTarget.w * 0.5 + R * 0.95);
-        const dx = tx - cat.x;
-        const sp = W * 0.12 + R * 1.2;
-        if (Math.abs(dx) < 3) {
-          cat.x = tx; peePhase = 'pee'; peeT = 1.4; cat.face = peeSide; pss();
-        } else {
-          cat.x += Math.sign(dx) * Math.min(Math.abs(dx), sp * dt);
-          cat.face = Math.sign(dx); cat.step += dt * 14;
-        }
-      } else if (peePhase === 'pee') {
-        peeT -= dt;
-        peeTarget.puddle = Math.min(1.5, peeTarget.puddle + dt * 0.7);
-        if (peeTarget.hp === 2 && peeT < 0.7) peeTarget.hp = 1;
-        if (peeT <= 0) {
-          peeTarget.hp = 0;
-          float(peeTarget.x, groundY - peeTarget.h - peeTarget.leafH - 10, 'RIP plant', C.pee, 28);
-          if (plants.every(p => p.hp <= 0)) { gameOver(); return; }
-          state = 'play';
-          cat.vy = -jumpSpeed() * 0.95;
-          cat.vx = (W / 2 - cat.x) * 0.6;
-          cat.spin = 3;
-          meow();
-        }
-      }
-    }
+    if (state === 'play' && cats.length <= CAT_AT.length && score >= CAT_AT[cats.length - 1]) addCat();
+    for (const c of cats.slice()) updateCat(c, dt);
 
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i];
@@ -734,37 +778,37 @@
     }
   }
 
-  function drawCat() {
-    const r = R, walking = state === 'pee' && peePhase === 'walk';
-    const peeing = state === 'pee' && peePhase === 'pee';
+  function drawCat(c) {
+    const r = R, walking = state === 'play' && c.mode === 'walk';
+    const peeing = state === 'play' && c.mode === 'pee';
     ctx.save();
-    ctx.translate(cat.x, cat.y);
-    ctx.rotate(cat.rot);
-    ctx.scale(cat.face, 1);
+    ctx.translate(c.x, c.y);
+    ctx.rotate(c.rot);
+    ctx.scale(c.face, 1);
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
 
     // tail
     const wag = Math.sin(time * (peeing ? 3 : 8)) * 0.3;
     ctx.strokeStyle = C.ink; ctx.lineWidth = r * 0.3;
     const tail = () => { ctx.beginPath(); ctx.moveTo(-r * 0.7, r * 0.1); ctx.quadraticCurveTo(-r * 1.5, -r * (0.1 + wag), -r * 1.25, -r * (0.85 + wag)); ctx.stroke(); };
-    tail(); ctx.strokeStyle = C.cat; ctx.lineWidth = r * 0.2; tail();
+    tail(); ctx.strokeStyle = c.look.cat; ctx.lineWidth = r * 0.2; tail();
 
     // legs
     const legY = r * 0.72;
     [-0.55, -0.25, 0.25, 0.55].forEach((lx, i) => {
       let ly = legY, dx = 0;
-      if (walking) { ly += Math.max(0, Math.sin(cat.step + i * Math.PI / 2)) * -r * 0.15; dx = Math.sin(cat.step + i) * r * 0.06; }
+      if (walking) { ly += Math.max(0, Math.sin(c.step + i * Math.PI / 2)) * -r * 0.15; dx = Math.sin(c.step + i) * r * 0.06; }
       if (peeing && i === 0) { ly -= r * 0.35; dx -= r * 0.25; }
-      if (state === 'play' || state === 'menu') ly += r * 0.08 * Math.sin(time * 20 + i);
+      if (c.mode === 'air' && (state === 'play' || state === 'menu')) ly += r * 0.08 * Math.sin(time * 20 + i);
       ctx.fillStyle = C.ink; ctx.beginPath(); ctx.ellipse(lx * r + dx, ly, r * 0.19, r * 0.24, 0, 0, 7); ctx.fill();
-      ctx.fillStyle = C.belly; ctx.beginPath(); ctx.ellipse(lx * r + dx, ly + r * 0.02, r * 0.13, r * 0.17, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = c.look.belly; ctx.beginPath(); ctx.ellipse(lx * r + dx, ly + r * 0.02, r * 0.13, r * 0.17, 0, 0, 7); ctx.fill();
     });
 
     // body
     ctx.fillStyle = C.ink; ctx.beginPath(); ctx.ellipse(0, r * 0.15, r * 0.98, r * 0.72, 0, 0, 7); ctx.fill();
-    ctx.fillStyle = C.cat; ctx.beginPath(); ctx.ellipse(0, r * 0.15, r * 0.9, r * 0.64, 0, 0, 7); ctx.fill();
-    ctx.fillStyle = C.belly; ctx.beginPath(); ctx.ellipse(r * 0.1, r * 0.4, r * 0.5, r * 0.3, 0, 0, 7); ctx.fill();
-    ctx.strokeStyle = C.catDark; ctx.lineWidth = r * 0.1;
+    ctx.fillStyle = c.look.cat; ctx.beginPath(); ctx.ellipse(0, r * 0.15, r * 0.9, r * 0.64, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = c.look.belly; ctx.beginPath(); ctx.ellipse(r * 0.1, r * 0.4, r * 0.5, r * 0.3, 0, 0, 7); ctx.fill();
+    ctx.strokeStyle = c.look.dark; ctx.lineWidth = r * 0.1;
     [-0.5, -0.15, 0.2].forEach(sx => { ctx.beginPath(); ctx.moveTo(sx * r - r * 0.08, -r * 0.42); ctx.lineTo(sx * r + r * 0.05, -r * 0.1); ctx.stroke(); });
 
     // head
@@ -772,17 +816,17 @@
     ctx.fillStyle = C.ink;
     [[-0.7, -0.5, -0.25, -1.35, 0.15, -0.9], [0.1, -0.85, 0.5, -1.35, 0.75, -0.55]].forEach(e => {
       ctx.beginPath(); ctx.moveTo(hx + e[0] * hr, hy + e[1] * hr); ctx.lineTo(hx + e[2] * hr, hy + e[3] * hr); ctx.lineTo(hx + e[4] * hr, hy + e[5] * hr); ctx.closePath();
-      ctx.lineWidth = r * 0.12; ctx.strokeStyle = C.ink; ctx.stroke(); ctx.fillStyle = C.cat; ctx.fill();
+      ctx.lineWidth = r * 0.12; ctx.strokeStyle = C.ink; ctx.stroke(); ctx.fillStyle = c.look.cat; ctx.fill();
     });
     ctx.beginPath(); ctx.arc(hx, hy, hr + r * 0.06, 0, 7); ctx.fillStyle = C.ink; ctx.fill();
-    ctx.beginPath(); ctx.arc(hx, hy, hr, 0, 7); ctx.fillStyle = C.cat; ctx.fill();
-    ctx.strokeStyle = C.catDark; ctx.lineWidth = r * 0.07;
+    ctx.beginPath(); ctx.arc(hx, hy, hr, 0, 7); ctx.fillStyle = c.look.cat; ctx.fill();
+    ctx.strokeStyle = c.look.dark; ctx.lineWidth = r * 0.07;
     [-0.25, 0, 0.25].forEach(s => { ctx.beginPath(); ctx.moveTo(hx + s * hr, hy - hr * 0.95); ctx.lineTo(hx + s * hr * 0.8, hy - hr * 0.6); ctx.stroke(); });
 
     // face
     const ey = hy - hr * 0.1, e1 = hx - hr * 0.35, e2 = hx + hr * 0.35;
     ctx.strokeStyle = C.ink; ctx.fillStyle = C.ink; ctx.lineWidth = r * 0.08;
-    if (cat.squint > 0) {
+    if (c.squint > 0) {
       [[e1, 1], [e2, -1]].forEach(([ex, d]) => {
         ctx.beginPath(); ctx.moveTo(ex - d * hr * 0.15, ey - hr * 0.13); ctx.lineTo(ex + d * hr * 0.12, ey); ctx.lineTo(ex - d * hr * 0.15, ey + hr * 0.13); ctx.stroke();
       });
@@ -840,26 +884,26 @@
     ctx.restore();
   }
 
-  function drawAura() {
+  function drawAura(c) {
     if (!powered() || state === 'over') return;
     const fade = Math.min(1, power / 0.6);
     const pulse = 1 + Math.sin(time * 10) * 0.06;
     ctx.save();
     ctx.globalAlpha = 0.35 * fade;
     ctx.fillStyle = '#ffb3cf';
-    ctx.beginPath(); ctx.arc(cat.x, cat.y, R * 1.7 * pulse, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(c.x, c.y, R * 1.7 * pulse, 0, 7); ctx.fill();
     ctx.globalAlpha = 0.6 * fade;
     ctx.strokeStyle = C.pee; ctx.lineWidth = 3; ctx.setLineDash([6, 8]); ctx.lineDashOffset = -time * 60;
-    ctx.beginPath(); ctx.arc(cat.x, cat.y, R * 3.2, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.arc(c.x, c.y, R * 3.2, 0, 7); ctx.stroke();
     ctx.setLineDash([]);
     ctx.restore();
   }
 
-  function drawPee() {
-    if (!(state === 'pee' && peePhase === 'pee')) return;
-    const sx = cat.x - cat.face * R * 0.75, sy = cat.y + R * 0.35;
-    const p = peeTarget;
-    const ex = p.x + peeSide * p.w * 0.3, ey = groundY - p.h * 0.35;
+  function drawPee(c) {
+    if (state !== 'play' || c.mode !== 'pee') return;
+    const sx = c.x - c.face * R * 0.75, sy = c.y + R * 0.35;
+    const p = c.peeTarget;
+    const ex = p.x + c.peeSide * p.w * 0.3, ey = groundY - p.h * 0.35;
     const mx = (sx + ex) / 2, my = Math.min(sy, ey) - R * 0.5;
     ctx.strokeStyle = C.pee; ctx.lineWidth = 4; ctx.lineCap = 'round';
     ctx.setLineDash([10, 6]); ctx.lineDashOffset = -time * 80;
@@ -887,6 +931,8 @@
     if (combo >= 2) outline('combo x' + combo, pad, pad + 74, 22, '#8ff09a');
     const alive = plants.filter(p => p.hp > 0).length;
     outline('plants ' + alive + '/' + NPLANTS, W / 2, pad, 24, C.card, 'center');
+    const nextAt = CAT_AT[cats.length - 1];
+    outline(cats.length + (cats.length === 1 ? ' cat' : ' cats') + (nextAt ? ' · next at ' + nextAt : ''), W - pad, pad + 40, 18, C.card, 'right');
     if (powered()) {
       const bw = Math.min(220, W * 0.5), bx = W / 2 - bw / 2, by = pad + 34;
       outline('BROOM POWER x2', W / 2, by, 20, '#ffb3cf', 'center');
@@ -897,8 +943,8 @@
   }
 
   function drawZone() {
-    if (!usingKeys || !(state === 'play' || state === 'pee')) return;
-    const zt = zoneTop(), inZone = state === 'pee' || powered() || cat.y > zt;
+    if (!usingKeys || state !== 'play') return;
+    const zt = zoneTop(), inZone = cats.some(inSwatZone);
     ctx.fillStyle = inZone ? 'rgba(143,240,154,0.10)' : 'rgba(255,255,255,0.05)';
     ctx.fillRect(0, zt, W, groundY - zt);
     ctx.strokeStyle = inZone ? '#8ff09a' : 'rgba(255,248,236,0.5)';
@@ -911,8 +957,10 @@
     ctx.fillText(inZone ? 'SWAT NOW (Space)' : 'swat zone', 16, zt - 4);
     // aim arrow under the cat
     const aim = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    const ready = cats.filter(inSwatZone);
+    const tc = ready.length ? ready.reduce((a, b) => b.y > a.y ? b : a) : cats[0];
     if (aim) {
-      const ax = cat.x + aim * R * 1.5, ay = cat.y;
+      const ax = tc.x + aim * R * 1.5, ay = tc.y;
       ctx.fillStyle = C.pee; ctx.strokeStyle = C.ink; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.moveTo(ax + aim * R * 0.4, ay); ctx.lineTo(ax, ay - R * 0.3); ctx.lineTo(ax, ay + R * 0.3); ctx.closePath();
       ctx.stroke(); ctx.fill();
@@ -923,14 +971,16 @@
     drawRoom();
     plants.forEach(drawPlant);
     drawZone();
-    drawPee();
+    cats.forEach(drawPee);
     drawBroom();
-    drawAura();
-    // floor shadow under the cat so you can judge height
-    const sh = Math.max(0.2, 1 - (groundY - cat.y) / H);
-    ctx.fillStyle = `rgba(0,0,0,${0.25 * sh})`;
-    ctx.beginPath(); ctx.ellipse(cat.x, groundY + 6, R * 0.9 * sh, 6 * sh, 0, 0, 7); ctx.fill();
-    drawCat();
+    cats.forEach(drawAura);
+    // floor shadows under the cats so you can judge height
+    cats.forEach(c => {
+      const sh = Math.max(0.2, 1 - (groundY - c.y) / H);
+      ctx.fillStyle = `rgba(0,0,0,${0.25 * sh})`;
+      ctx.beginPath(); ctx.ellipse(c.x, groundY + 6, R * 0.9 * sh, 6 * sh, 0, 0, 7); ctx.fill();
+    });
+    cats.forEach(drawCat);
     parts.forEach(p => { ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, 7); ctx.fill(); });
     ctx.globalAlpha = 1;
     texts.forEach(t => {
@@ -967,7 +1017,7 @@
   document.getElementById('againBtn').addEventListener('click', start);
   newPlants();
   resize();
-  resetCat();
+  resetCat(cats[0]);
   loadBoard();
   requestAnimationFrame(frame);
 })();

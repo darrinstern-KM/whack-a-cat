@@ -10,6 +10,7 @@ Keep Mr. Biscuits in the air. Don't let him near the plants.
 - **Tap a plant** and you lose 5 points.
 - **Miss** and the cat walks over and pees on a plant. Whack it on the way to save the plant (+3).
 - One pee kills a plant. Lose all three and it's game over.
+- At 100 points a second cat (Pickles) joins, and at 300 a third (Noodle). Each one can miss and pee on its own.
 - Every so often a **broom** falls. Tap it for 5 seconds of superpowers: the cat floats, your swat reaches much further, points are doubled, plant taps are free and the cat can't land to pee.
 - Save your score to the shared leaderboard with any name you like.
 
@@ -17,7 +18,7 @@ Keep Mr. Biscuits in the air. Don't let him near the plants.
 
 | Key | What it does |
 | --- | --- |
-| `Space` / `↑` / `W` / `Enter` | Swat the cat. It only connects once the cat drops into the low "swat zone" (dashed line). Also grabs a falling broom once it's in the zone. While powered up, the whole screen is the swat zone. |
+| `Space` / `↑` / `W` / `Enter` | Swat the lowest cat. It only connects once the cat drops into the low "swat zone" (dashed line). Also grabs a falling broom once it's in the zone. While powered up, the whole screen is the swat zone. |
 | `←` `→` / `A` `D` | Hold while swatting to aim the cat left or right |
 | `P` / `Esc` | Pause |
 | `M` | Sound on/off |
