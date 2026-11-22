@@ -1,0 +1,28 @@
+# Free Supabase projects pause after about a week with no traffic, which takes the
+# leaderboard offline. This reads one score every 3 days so the database stays awake.
+name: Keep leaderboard awake
+
+on:
+  schedule:
+    - cron: "17 14 */3 * *"   # every 3 days at 14:17 UTC
+  workflow_dispatch:           # "Run workflow" button for a manual check
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read one score
+        run: |
+          # Same public, read-only key the game page already uses.
+          code=$(curl -s -o /dev/null -w "%{http_code}" --retry 3 --retry-delay 20 \
+            "https://jeevipzjpcnmgtagjuvs.supabase.co/rest/v1/scores?select=id&limit=1" \
+            -H "apikey: sb_publishable_KiLxxoBLqqoczVmQ3PoTzA_gUXPMpyo")
+          echo "Leaderboard answered HTTP $code"
+          if [ "$code" != "200" ]; then
+            echo "::error::Leaderboard is not answering. The Supabase project may be paused: restore it from the Supabase dashboard."
+            exit 1
+          fi
